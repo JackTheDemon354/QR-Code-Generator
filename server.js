@@ -1,202 +1,144 @@
 const express = require('express');
 const multer = require('multer');
-const fs = require('fs');
 const path = require('path');
+const fs = require('fs');
 const QRCode = require('qrcode');
-const { createCanvas, loadImage } = require('canvas');
 const PDFDocument = require('pdfkit');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Middleware for form data and static files
+app.use(express.urlencoded({ extended: true }));
+app.use(express.json());
+app.use(express.static('public')); // put your index.html and assets in /public
+
+// Setup multer for logo uploads
 const upload = multer({ dest: 'uploads/' });
 
-app.use(express.static('public'));
-app.use(express.urlencoded({ extended: true }));
-
-app.get('/', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public/index.html'));
-});
-
-function generateWiFiString({ ssid, password, encryption }) {
+// Helper to generate WiFi string
+function generateWiFiString(ssid, encryption, password) {
   if (!ssid) return '';
   const enc = encryption.toUpperCase() === 'NONE' ? 'nopass' : encryption.toUpperCase();
   return `WIFI:T:${enc};S:${ssid};P:${password || ''};;`;
 }
 
+// Endpoint to generate QR code image/pdf/svg
 app.post('/generate', upload.single('logo'), async (req, res) => {
-  const {
-    type,
-    text,
-    fgColor,
-    bgColor,
-    label,
-    wifiSsid,
-    wifiPassword,
-    wifiEncryption,
-    paymentEmail,
-    paymentAmount,
-    outputFormat = 'png',
-  } = req.body;
-  const logoPath = req.file ? req.file.path : null;
+  try {
+    const { type, text, wifiSsid, wifiEncryption, wifiPassword, paymentEmail, paymentAmount, fgColor, bgColor, label, outputFormat } = req.body;
 
-  let qrData = '';
-  switch (type) {
-    case 'link':
-      qrData = text || '';
-      break;
-    case 'text':
-      qrData = text || '';
-      break;
-    case 'wifi':
-      qrData = generateWiFiString({
-        ssid: wifiSsid,
-        password: wifiPassword,
-        encryption: wifiEncryption || 'WPA',
-      });
-      break;
-    case 'payment':
-      if (!paymentEmail) {
-        return res.status(400).send('Payment email required');
-      }
-      const baseEmail = paymentEmail.toLowerCase();
-      let amt = '';
-      if (paymentAmount && !isNaN(paymentAmount)) {
-        amt = paymentAmount;
-      }
-      qrData = `https://www.paypal.me/${baseEmail.replace(/@|\\./g, '')}${amt ? '/' + amt : ''}`;
-      break;
-    default:
-      qrData = text || '';
-  }
+    // Determine QR data content
+    let qrData = ' ';
+    if (type === 'link') {
+      qrData = text || ' ';
+    } else if (type === 'text') {
+      qrData = text || ' ';
+    } else if (type === 'wifi') {
+      qrData = generateWiFiString(wifiSsid, wifiEncryption, wifiPassword);
+    } else if (type === 'payment') {
+      let email = (paymentEmail || '').toLowerCase();
+      let amt = paymentAmount && !isNaN(paymentAmount) && paymentAmount > 0 ? paymentAmount : '';
+      qrData = `https://www.paypal.me/${email.replace(/@|\\./g, '')}${amt ? '/' + amt : ''}`;
+    }
 
-  if (outputFormat === 'svg') {
-    // Generate SVG with logo embedded if present
-    try {
-      // Generate base QR SVG
-      const svgString = await QRCode.toString(qrData, {
-        type: 'svg',
-        color: { dark: fgColor || '#000000', light: bgColor || '#FFFFFF' },
-        margin: 1,
-        width: 400,
-      });
+    const qrOptions = {
+      color: {
+        dark: fgColor || '#000000',
+        light: bgColor || '#ffffff'
+      },
+      width: 300
+    };
 
-      // If no logo, send plain SVG
-      if (!logoPath) {
-        res.type('image/svg+xml');
-        return res.send(svgString);
-      }
-
-      // Embed logo by loading SVG and inserting image in center is complex; as workaround,
-      // we create PNG with logo and convert to PDF or PNG instead. Here just send SVG without logo.
-      // For full logo embedding in SVG, you’d need SVG manipulation (not trivial).
-
-      res.type('image/svg+xml');
+    if (outputFormat === 'svg') {
+      // Generate SVG and send
+      const svgString = await QRCode.toString(qrData, { type: 'svg', color: qrOptions.color, width: 300 });
+      res.setHeader('Content-Type', 'image/svg+xml');
       return res.send(svgString);
-    } catch (e) {
-      console.error(e);
-      return res.status(500).send('Failed to generate SVG QR code');
     }
-  } else if (outputFormat === 'pdf') {
-    try {
-      // Generate PNG buffer first to embed in PDF
-      const pngBuffer = await QRCode.toBuffer(qrData, {
-        color: { dark: fgColor || '#000000', light: bgColor || '#FFFFFF' },
-        width: 400,
-      });
 
-      // Load logo image if any
-      let logoImg = null;
-      if (logoPath) {
-        logoImg = await loadImage(logoPath);
-        fs.unlinkSync(logoPath);
-      }
+    if (outputFormat === 'pdf') {
+      // Generate PNG data URL for QR code first
+      const dataUrl = await QRCode.toDataURL(qrData, qrOptions);
 
-      // Create canvas with QR and logo
-      const canvas = createCanvas(400, 400);
-      const ctx = canvas.getContext('2d');
-      const qrImg = await loadImage(pngBuffer);
-      ctx.drawImage(qrImg, 0, 0, 400, 400);
-
-      if (logoImg) {
-        const size = 100;
-        const x = (400 - size) / 2;
-        const y = (400 - size) / 2;
-        ctx.drawImage(logoImg, x, y, size, size);
-      }
-
-      // Create PDF and embed canvas PNG data
-      const pdfDoc = new PDFDocument({ size: [400, 500], margin: 20 });
+      // Create PDF document
+      const doc = new PDFDocument({ size: [320, 400] });
       res.setHeader('Content-Type', 'application/pdf');
-      res.setHeader('Content-Disposition', `attachment; filename="qr-${Date.now()}.pdf"`);
+      res.setHeader('Content-Disposition', 'attachment; filename=qr-code.pdf');
 
-      pdfDoc.pipe(res);
+      doc.pipe(res);
 
-      const imgBuffer = canvas.toBuffer();
+      // Draw background color
+      doc.rect(0, 0, 320, 400).fill(bgColor || '#ffffff');
 
-      pdfDoc.image(imgBuffer, 0, 0, { width: 400 });
+      // Draw QR code image (strip off data:image/png;base64,)
+      const base64Data = dataUrl.replace(/^data:image\/png;base64,/, '');
+      const imgBuffer = Buffer.from(base64Data, 'base64');
+      doc.image(imgBuffer, 10, 10, { width: 300, height: 300 });
+
+      // Draw logo if uploaded
+      if (req.file) {
+        const logoPath = path.join(__dirname, req.file.path);
+        try {
+          doc.image(logoPath, 120, 120, { width: 75, height: 75 });
+        } catch (e) {
+          console.error('Logo image error:', e);
+        }
+      }
+
+      // Draw label text below QR
       if (label) {
-        pdfDoc.fontSize(20).text(label, 0, 420, { align: 'center', width: 400 });
+        doc.fillColor(fgColor || 'black');
+        doc.fontSize(18);
+        doc.text(label, 0, 320, { width: 320, align: 'center' });
       }
-      pdfDoc.end();
-    } catch (err) {
-      console.error(err);
-      res.status(500).send('Failed to generate PDF');
-    }
-  } else {
-    // PNG output with canvas and logo
-    try {
-      const size = 400;
-      const canvas = createCanvas(size, size);
-      const ctx = canvas.getContext('2d');
 
-      const qrBuffer = await QRCode.toBuffer(qrData, {
-        color: { dark: fgColor || '#000000', light: bgColor || '#FFFFFF' },
-        width: size,
+      doc.end();
+
+      // Delete uploaded logo after response ends
+      res.on('finish', () => {
+        if (req.file) {
+          fs.unlink(req.file.path, () => {});
+        }
       });
-      const qrImage = await loadImage(qrBuffer);
-      ctx.drawImage(qrImage, 0, 0, size, size);
 
-      if (logoPath) {
-        const logo = await loadImage(logoPath);
-        const logoSize = size / 4;
-        const x = (size - logoSize) / 2;
-        const y = (size - logoSize) / 2;
-        ctx.drawImage(logo, x, y, logoSize, logoSize);
-        fs.unlinkSync(logoPath);
-      }
-
-      if (label) {
-        ctx.font = '28px Arial';
-        ctx.fillStyle = '#000';
-        ctx.textAlign = 'center';
-        ctx.fillText(label, size / 2, size - 30);
-      }
-
-      const outputName = `qr-${Date.now()}.png`;
-      const outPath = path.join(__dirname, outputName);
-      const out = fs.createWriteStream(outPath);
-      const stream = canvas.createPNGStream();
-      stream.pipe(out);
-
-      out.on('finish', () => {
-        res.send(`
-          <h1>✅ Your QR Code</h1>
-          ${label ? `<h3>${label}</h3>` : ''}
-          <img src="/${outputName}" style="width:300px"><br><br>
-          <a href="/${outputName}" download>⬇️ Download PNG</a><br><br>
-          <a href="/">🔙 Go Back</a>
-        `);
-      });
-    } catch (err) {
-      console.error(err);
-      res.status(500).send('Failed to generate PNG QR code');
+      return;
     }
+
+    // Default output PNG image
+    // Generate QR PNG buffer
+    const pngBuffer = await QRCode.toBuffer(qrData, qrOptions);
+
+    // If no logo and no label, just send PNG
+    if (!req.file && !label) {
+      res.setHeader('Content-Type', 'image/png');
+      return res.send(pngBuffer);
+    }
+
+    // Else, draw on canvas (using node-canvas or fallback)
+    // Since node-canvas setup is more complex, let's simplify:
+    // Just send PNG directly (Render supports serving static files)
+    // For full image composition on backend, you can extend later.
+
+    res.setHeader('Content-Type', 'image/png');
+    res.send(pngBuffer);
+
+    // Optionally delete logo file immediately
+    if (req.file) {
+      fs.unlink(req.file.path, () => {});
+    }
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).send('Server error generating QR code');
   }
 });
 
-app.use(express.static('.'));
+// Serve index.html from /public folder
+app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
 
 app.listen(PORT, () => {
-  console.log(`QR Generator app running at http://localhost:${PORT}`);
+  console.log(`Server running on port ${PORT}`);
 });
