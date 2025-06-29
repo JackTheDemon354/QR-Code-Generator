@@ -2,11 +2,12 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Full QR Code Generator App</title>
+  <title>Jack's QR Code Generator</title>
   <script src="https://cdn.jsdelivr.net/npm/qrcode/build/qrcode.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
   <style>
     body {
-      font-family: Arial, sans-serif;
+      font-family: Calibri, Comic Sans MS;
       max-width: 600px;
       margin: auto;
       padding: 20px;
@@ -68,12 +69,13 @@
   </style>
 </head>
 <body>
-  <h1>Full QR Code Generator App</h1>
+  <h1>Jack's QR Code Generator</h1>
   <div id="tabs">
     <button type="button" onclick="showTab('link')">🔗 Link</button>
     <button type="button" onclick="showTab('text')">💬 Text</button>
     <button type="button" onclick="showTab('wifi')">📶 WiFi</button>
     <button type="button" onclick="showTab('payment')">💸 Payment</button>
+    <button type="button" onclick="showTab('file')">📎 File</button>
   </div>
 
   <form id="qrForm" action="/generate" method="post" enctype="multipart/form-data">
@@ -104,13 +106,23 @@
 
     <div id="payment" class="tab-content">
       <label for="paymentEmail">PayPal Email:</label>
-      <input type="text" id="paymentEmail" name="paymentEmail" value="jack.vanwijk@hotmail.com" readonly />
-      <label for="paymentAmount">Amount (optional):</label>
-      <input type="number" id="paymentAmount" name="paymentAmount" placeholder="Amount in USD" min="0" step="0.01" />
+      <input type="text" id="paymentEmail" name="paymentEmail" placeholder="Payment to..." />
+      <label for="paymentAmount">Amount (optional, AUD):</label>
+      <input type="number" id="paymentAmount" name="paymentAmount" placeholder="Amount in AUD" min="0" step="0.01" />
+    </div>
+
+    <div id="file" class="tab-content">
+      <label for="fileUpload">Upload File (max 5MB):</label>
+      <input type="file" id="fileUpload" name="file" />
     </div>
 
     <label for="labelText">Optional Label (under QR):</label>
     <input type="text" id="labelText" name="label" placeholder="Label text here" />
+
+    <label for="encrypt">🔐 Optional Encryption Password:</label>
+    <input type="text" id="encrypt" name="encrypt" placeholder="Leave empty if no encryption" />
+
+    <button type="button" id="copyLinkBtn" style="display:none; margin-top: 10px;">🔗 Copy Decrypt Link</button>
 
     <label for="fgColor">Foreground Color:</label>
     <input type="color" id="fgColor" name="fgColor" value="#000000" />
@@ -121,6 +133,13 @@
     <label for="logoInput">Upload Logo (optional):</label>
     <input type="file" id="logoInput" name="logo" accept="image/*" />
 
+    <label for="outputFormat">Output Format:</label>
+    <select id="outputFormat" name="outputFormat">
+      <option value="png">PNG (Image)</option>
+      <option value="svg">SVG (Vector)</option>
+      <option value="pdf">PDF (Document)</option>
+    </select>
+
     <button id="downloadBtn" type="button">💾 Download Preview</button>
     <button type="submit" style="margin-left: 10px;">⬇️ Generate Final QR</button>
   </form>
@@ -128,15 +147,18 @@
   <canvas id="previewCanvas" width="300" height="360"></canvas>
   <img id="logoPreview" alt="Logo preview" />
 
-  <script src="https://cdn.jsdelivr.net/npm/qrcode/build/qrcode.min.js"></script>
   <script>
-    const tabs = ['link', 'text', 'wifi', 'payment'];
+    const tabs = ['link', 'text', 'wifi', 'payment', 'file'];
     const qrTypeInput = document.getElementById('qrType');
     const previewCanvas = document.getElementById('previewCanvas');
     const ctx = previewCanvas.getContext('2d');
     const logoInput = document.getElementById('logoInput');
     const logoPreview = document.getElementById('logoPreview');
     const downloadBtn = document.getElementById('downloadBtn');
+    const outputFormatSelect = document.getElementById('outputFormat');
+    const encryptInput = document.getElementById('encrypt');
+    const copyLinkBtn = document.getElementById('copyLinkBtn');
+    const fileUpload = document.getElementById('fileUpload');
     let logoImg = null;
 
     function showTab(tabName) {
@@ -155,12 +177,15 @@
     document.getElementById('labelText').addEventListener('input', updatePreview);
     document.getElementById('fgColor').addEventListener('input', updatePreview);
     document.getElementById('bgColor').addEventListener('input', updatePreview);
+    encryptInput.addEventListener('input', updatePreview);
+    outputFormatSelect.addEventListener('change', updatePreview);
     document.getElementById('textLink').addEventListener('input', updatePreview);
     document.getElementById('textText').addEventListener('input', updatePreview);
     document.getElementById('wifiSsid').addEventListener('input', updatePreview);
     document.getElementById('wifiPassword').addEventListener('input', updatePreview);
     document.getElementById('wifiEncryption').addEventListener('change', updatePreview);
     document.getElementById('paymentAmount').addEventListener('input', updatePreview);
+    document.getElementById('paymentEmail').addEventListener('input', updatePreview);
 
     logoInput.addEventListener('change', () => {
       const file = logoInput.files[0];
@@ -192,58 +217,93 @@
     function getQRData() {
       const type = qrTypeInput.value;
       switch (type) {
-        case 'link':
-          return document.getElementById('textLink').value || ' ';
-        case 'text':
-          return document.getElementById('textText').value || ' ';
-        case 'wifi':
-          return generateWiFiString(
-            document.getElementById('wifiSsid').value,
-            document.getElementById('wifiEncryption').value,
-            document.getElementById('wifiPassword').value
-          );
+        case 'link': return document.getElementById('textLink').value || ' ';
+        case 'text': return document.getElementById('textText').value || ' ';
+        case 'wifi': return generateWiFiString(
+          document.getElementById('wifiSsid').value,
+          document.getElementById('wifiEncryption').value,
+          document.getElementById('wifiPassword').value
+        );
         case 'payment':
           const email = document.getElementById('paymentEmail').value.toLowerCase();
           let amt = document.getElementById('paymentAmount').value;
           amt = amt && !isNaN(amt) && amt > 0 ? amt : '';
           return `https://www.paypal.me/${email.replace(/@|\./g, '')}${amt ? '/' + amt : ''}`;
-        default:
-          return ' ';
+        case 'file':
+          // For file, no preview data to generate here (must wait for backend)
+          return '';
+        default: return ' ';
       }
     }
 
+    function encryptIfNeeded(data) {
+      const password = encryptInput.value.trim();
+      if (!password) return data;
+      return CryptoJS.AES.encrypt(data, password).toString();
+    }
+
     function updatePreview() {
-      const text = getQRData();
+      const type = qrTypeInput.value;
+
+      // For file tab, no preview from client (needs backend generation)
+      if (type === 'file') {
+        copyLinkBtn.style.display = 'none';
+        ctx.clearRect(0, 0, previewCanvas.width, previewCanvas.height);
+        ctx.font = '16px Arial';
+        ctx.fillStyle = '#000';
+        ctx.textAlign = 'center';
+        ctx.fillText('Preview not available for file uploads.', previewCanvas.width / 2, previewCanvas.height / 2);
+        return;
+      }
+
+      const data = getQRData();
+      const encryptedData = encryptIfNeeded(data);
       const fg = document.getElementById('fgColor').value;
       const bg = document.getElementById('bgColor').value;
       const label = document.getElementById('labelText').value;
+      const outputFormat = outputFormatSelect.value;
 
       ctx.clearRect(0, 0, previewCanvas.width, previewCanvas.height);
 
-      QRCode.toDataURL(text, {
+      if (encryptInput.value.trim()) {
+        const link = `${window.location.origin}/decrypt?data=${encodeURIComponent(encryptedData)}`;
+        copyLinkBtn.style.display = 'inline-block';
+        copyLinkBtn.onclick = () => {
+          navigator.clipboard.writeText(link).then(() => {
+            alert("🔗 Decrypt link copied!");
+          });
+        };
+      } else {
+        copyLinkBtn.style.display = 'none';
+      }
+
+      if (outputFormat === 'svg') {
+        ctx.font = '16px Arial';
+        ctx.fillStyle = '#000';
+        ctx.textAlign = 'center';
+        ctx.fillText('SVG preview not supported.', previewCanvas.width / 2, previewCanvas.height / 2);
+        return;
+      }
+
+      QRCode.toDataURL(encryptedData, {
         color: { dark: fg, light: bg },
         width: 300
       }, (err, url) => {
-        if (err) {
-          console.error(err);
-          return;
-        }
+        if (err) return console.error(err);
         const qrImg = new Image();
         qrImg.onload = () => {
           ctx.drawImage(qrImg, 0, 0, 300, 300);
-
           if (logoImg) {
             const size = 75;
             const x = (300 - size) / 2;
             const y = (300 - size) / 2;
             ctx.drawImage(logoImg, x, y, size, size);
           }
-
           if (label) {
-            ctx.font = '20px Arial';
+            ctx.font = '16px Arial';
             ctx.fillStyle = '#000';
             ctx.textAlign = 'center';
-            ctx.fillText(label, 150, 340);
+            ctx.fillText(label, previewCanvas.width / 2, 350);
           }
         };
         qrImg.src = url;
@@ -257,8 +317,8 @@
       link.click();
     });
 
-    // Initialize first tab and preview
     showTab('link');
+    updatePreview();
   </script>
 </body>
 </html>
