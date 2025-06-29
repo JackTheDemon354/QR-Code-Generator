@@ -1,21 +1,41 @@
 const express = require('express');
 const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
 const QRCode = require('qrcode');
 const PDFDocument = require('pdfkit');
-const cryptoJS = require('crypto-js');
-const path = require('path');
+const crypto = require('crypto-js');
 
 const app = express();
-const port = process.env.PORT || 3000;
-
-const upload = multer({ storage: multer.memoryStorage() });
+const PORT = process.env.PORT || 3000;
 
 app.use(express.static('public'));
+app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-function encryptData(data, password) {
-  if (!password || password.trim() === '') return data;
-  return cryptoJS.AES.encrypt(data, password).toString();
+// Setup Multer for file uploads (limit 5MB)
+const upload = multer({
+  dest: 'uploads/',
+  limits: { fileSize: 5 * 1024 * 1024 },
+});
+
+// Utility: delete file after use
+function deleteFile(filePath) {
+  fs.unlink(filePath, (err) => {
+    if (err) console.error('Failed to delete:', filePath, err);
+  });
+}
+
+// Generate PayPal.me URL with AUD currency (amount optional)
+function generatePayPalUrl(email, amount) {
+  // PayPal.me URLs don't support currency param; amount is in the default currency of the recipient.
+  // To explicitly request AUD, you could build a PayPal payment URL (but PayPal.me does not allow currency param)
+  // We'll just create a standard PayPal.me link with amount.
+  const sanitized = email.replace(/@|\./g, '');
+  if (amount && amount > 0) {
+    return `https://www.paypal.me/${sanitized}/${amount}`;
+  }
+  return `https://www.paypal.me/${sanitized}`;
 }
 
 function generateWiFiString(ssid, encryption, password) {
@@ -24,98 +44,110 @@ function generateWiFiString(ssid, encryption, password) {
   return `WIFI:T:${enc};S:${ssid};P:${password || ''};;`;
 }
 
-app.post('/generate', upload.single('fileUpload'), async (req, res) => {
+// POST /generate
+app.post('/generate', upload.single('file'), async (req, res) => {
   try {
-    const {
-      type,
-      text,
-      multiLinksText,
-      wifiSsid,
-      wifiEncryption,
-      wifiPassword,
-      paymentEmail,
-      paymentAmount,
-      label,
-      fgColor = '#000000',
-      bgColor = '#ffffff',
-      outputFormat = 'png',
-      encryptionPassword,
-    } = req.body;
-
-    let qrData = '';
+    let qrText = '';
+    const type = req.body.type || 'link';
+    const label = req.body.label || '';
+    const fgColor = req.body.fgColor || '#000000';
+    const bgColor = req.body.bgColor || '#ffffff';
+    const outputFormat = req.body.outputFormat || 'png';
+    const encryptPass = (req.body.encrypt || '').trim();
 
     switch (type) {
       case 'link':
-        qrData = text || ' ';
+        qrText = req.body.text || ' ';
         break;
-
-      case 'multilinks':
-        if (multiLinksText) {
-          const lines = multiLinksText
-            .split('\n')
-            .map(l => l.trim())
-            .filter(l => l.length > 0);
-          qrData = JSON.stringify(lines);
-        } else {
-          qrData = '[]';
-        }
-        break;
-
       case 'text':
-        qrData = text || ' ';
+        qrText = req.body.text || ' ';
         break;
-
       case 'wifi':
-        qrData = generateWiFiString(wifiSsid, wifiEncryption, wifiPassword);
+        qrText = generateWiFiString(req.body.wifiSsid, req.body.wifiEncryption, req.body.wifiPassword);
         break;
-
       case 'payment':
-        if (!paymentEmail) {
-          qrData = ' ';
-        } else {
-          const emailClean = paymentEmail.toLowerCase().replace(/@|\./g, '');
-          const amt = paymentAmount && !isNaN(paymentAmount) && paymentAmount > 0 ? paymentAmount : '';
-          qrData = `https://www.paypal.me/${emailClean}${amt ? '/' + amt : ''}`;
-        }
+        qrText = generatePayPalUrl(req.body.paymentEmail || '', req.body.paymentAmount);
         break;
-
       case 'file':
         if (!req.file) {
-          return res.status(400).send('No file uploaded.');
+          return res.status(400).send('No file uploaded for file QR.');
         }
-        // Encode file buffer to base64 string with MIME type
-        const base64Data = req.file.buffer.toString('base64');
-        const mimeType = req.file.mimetype;
-        qrData = `data:${mimeType};base64,${base64Data}`;
+        // Create a public link for file
+        const fileUrl = `${req.protocol}://${req.get('host')}/uploads/${req.file.filename}`;
+        qrText = fileUrl;
         break;
-
       default:
-        qrData = ' ';
+        qrText = ' ';
     }
 
-    // Encrypt data if password given
-    if (encryptionPassword && encryptionPassword.trim() !== '') {
-      qrData = encryptData(qrData, encryptionPassword);
+    // Encrypt if needed
+    if (encryptPass) {
+      qrText = crypto.AES.encrypt(qrText, encryptPass).toString();
     }
 
-    const qrOptions = {
-      color: {
-        dark: fgColor,
-        light: bgColor
-      },
-      width: 300,
-      margin: 1
-    };
+    // Generate QR code in requested format
+    if (outputFormat === 'png') {
+      const qrBuffer = await QRCode.toBuffer(qrText, {
+        color: { dark: fgColor, light: bgColor },
+        width: 300,
+      });
 
-    if (outputFormat === 'png' || outputFormat === 'svg') {
-      let qrCodeData;
+      res.set('Content-Type', 'image/png');
+      res.set('Content-Disposition', `attachment; filename="qrcode.png"`);
 
-      if (outputFormat === 'png') {
-        qrCodeData = await QRCode.toDataURL(qrData, qrOptions);
-      } else {
-        qrCodeData = await QRCode.toString(qrData, { type: 'svg', color: qrOptions.color });
+      return res.send(qrBuffer);
+    }
+
+    if (outputFormat === 'svg') {
+      const svgString = await QRCode.toString(qrText, {
+        type: 'svg',
+        color: { dark: fgColor, light: bgColor },
+        width: 300,
+      });
+
+      res.set('Content-Type', 'image/svg+xml');
+      res.set('Content-Disposition', `attachment; filename="qrcode.svg"`);
+
+      return res.send(svgString);
+    }
+
+    if (outputFormat === 'pdf') {
+      const doc = new PDFDocument({ size: [320, 400] });
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', 'attachment; filename="qrcode.pdf"');
+
+      const qrDataUrl = await QRCode.toDataURL(qrText, {
+        color: { dark: fgColor, light: bgColor },
+        width: 300,
+      });
+
+      doc.image(Buffer.from(qrDataUrl.split(',')[1], 'base64'), 10, 10, { width: 300 });
+
+      if (label) {
+        doc.fontSize(14).text(label, 10, 320, { width: 300, align: 'center' });
       }
 
-      if (outputFormat === 'png') {
-        const base64Data = qrCodeData.split(',')[1];
-        const imgBuffer = Buffer.from(base64Data, 'base64
+      doc.end();
+      doc.pipe(res);
+      return;
+    }
+
+    res.status(400).send('Unsupported format requested.');
+
+  } catch (error) {
+    console.error('Error generating QR:', error);
+    res.status(500).send('Server error');
+  } finally {
+    // Clean up uploaded file if any
+    if (req.file) {
+      deleteFile(req.file.path);
+    }
+  }
+});
+
+// Serve uploaded files publicly (for file QR)
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+});
