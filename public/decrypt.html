@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Decrypt QR Code</title>
+  <style>
+    body {
+      font-family: Calibri, sans-serif;
+      max-width: 600px;
+      margin: auto;
+      padding: 20px;
+      text-align: center;
+    }
+    textarea, input {
+      width: 100%;
+      padding: 10px;
+      margin-top: 10px;
+      font-size: 16px;
+    }
+    button {
+      margin-top: 15px;
+      padding: 10px 20px;
+      font-size: 16px;
+      cursor: pointer;
+    }
+    #result {
+      margin-top: 20px;
+      word-wrap: break-word;
+      background-color: #f0f0f0;
+      padding: 15px;
+      border-radius: 10px;
+    }
+  </style>
+</head>
+<body>
+  <h1>🔓 Decrypt QR Code Data</h1>
+
+  <label for="encrypted">Encrypted Data:</label>
+  <textarea id="encrypted" rows="5" placeholder="Paste the encrypted data or scan a QR that links to this page..."></textarea>
+
+  <label for="password">Password:</label>
+  <input type="text" id="password" placeholder="Enter password to decrypt" />
+
+  <button onclick="decrypt()">🔓 Decrypt</button>
+
+  <div id="result"></div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
+  <script>
+    // Auto-fill data from URL
+    const urlParams = new URLSearchParams(window.location.search);
+    const data = urlParams.get('data');
+    if (data) {
+      document.getElementById('encrypted').value = decodeURIComponent(data);
+    }
+
+    function decrypt() {
+      const encrypted = document.getElementById('encrypted').value.trim();
+      const password = document.getElementById('password').value.trim();
+      const resultDiv = document.getElementById('result');
+
+      if (!encrypted || !password) {
+        resultDiv.innerHTML = '❗ Please enter both encrypted data and password.';
+        return;
+      }
+
+      try {
+        const bytes = CryptoJS.AES.decrypt(encrypted, password);
+        const decrypted = bytes.toString(CryptoJS.enc.Utf8);
+
+        if (!decrypted) {
+          resultDiv.innerHTML = '❌ Incorrect password or invalid data.';
+        } else {
+          resultDiv.innerHTML = `<strong>✅ Decrypted Data:</strong><br><br><pre>${decrypted}</pre>`;
+        }
+      } catch (e) {
+        resultDiv.innerHTML = '❌ Error during decryption.';
+      }
+    }
+  </script>
+</body>
+</html>
