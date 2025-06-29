@@ -1,173 +1,168 @@
+// server.js
 const express = require('express');
 const multer = require('multer');
 const QRCode = require('qrcode');
-const PDFDocument = require('pdfkit');
+const crypto = require('crypto');
+const { PDFDocument, rgb, StandardFonts } = require('pdf-lib');
 const fs = require('fs');
 const path = require('path');
-const bodyParser = require('body-parser');
-const CryptoJS = require('crypto-js');
 
 const app = express();
 const port = process.env.PORT || 3000;
 
-// Middleware
-app.use(express.static('public'));
-app.use(bodyParser.urlencoded({ extended: true }));
-app.use(bodyParser.json());
-
-// Multer setup for file uploads
-const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    const uploadDir = 'uploads/';
-    if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir);
-    cb(null, uploadDir);
-  },
-  filename: function (req, file, cb) {
-    cb(null, Date.now() + '-' + file.originalname.replace(/\s+/g, '_'));
-  }
+// Setup multer for file uploads, max 5MB
+const upload = multer({
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
+  storage: multer.memoryStorage(),
 });
-const upload = multer({ storage: storage, limits: { fileSize: 5 * 1024 * 1024 } }); // 5MB limit
 
-// Helper: Encrypt data
-function encryptIfNeeded(text, password) {
+app.use(express.urlencoded({ extended: true }));
+app.use(express.json());
+app.use(express.static('public')); // Serve your index.html and assets from /public
+
+// AES Encryption helper
+function encrypt(text, password) {
   if (!password) return text;
-  return CryptoJS.AES.encrypt(text, password).toString();
+  const iv = crypto.randomBytes(16);
+  const key = crypto.scryptSync(password, 'salt', 32);
+  const cipher = crypto.createCipheriv('aes-256-cbc', key, iv);
+  const encrypted = Buffer.concat([cipher.update(text, 'utf8'), cipher.final()]);
+  return iv.toString('hex') + ':' + encrypted.toString('hex');
 }
 
-// Helper: Decrypt data
-function decryptIfNeeded(encryptedText, password) {
-  try {
-    const bytes = CryptoJS.AES.decrypt(encryptedText, password);
-    return bytes.toString(CryptoJS.enc.Utf8);
-  } catch (e) {
-    return null;
-  }
+function decrypt(data, password) {
+  const [ivHex, encryptedHex] = data.split(':');
+  if (!ivHex || !encryptedHex) return null;
+  const iv = Buffer.from(ivHex, 'hex');
+  const encryptedText = Buffer.from(encryptedHex, 'hex');
+  const key = crypto.scryptSync(password, 'salt', 32);
+  const decipher = crypto.createDecipheriv('aes-256-cbc', key, iv);
+  const decrypted = Buffer.concat([decipher.update(encryptedText), decipher.final()]);
+  return decrypted.toString('utf8');
 }
 
-// GET root
-app.get('/', (req, res) => {
-  res.sendFile(__dirname + '/public/index.html');
-});
-
-// GET decryption page
-app.get('/decrypt', (req, res) => {
-  res.send(`
-    <html><body>
-    <h2>Decrypt QR Data</h2>
-    <form method="POST" action="/decrypt">
-      <input type="hidden" name="data" value="${req.query.data || ''}" />
-      <label>Password: <input type="text" name="password" /></label>
-      <button type="submit">🔓 Decrypt</button>
-    </form>
-    </body></html>
-  `);
-});
-
-// POST decryption
-app.post('/decrypt', (req, res) => {
-  const { data, password } = req.body;
-  const decrypted = decryptIfNeeded(data, password);
-  if (decrypted) {
-    res.send(`<h3>✅ Decrypted:</h3><pre>${decrypted}</pre>`);
-  } else {
-    res.send('<h3>❌ Failed to decrypt. Wrong password?</h3>');
-  }
-});
-
-// POST: Generate QR
-app.post('/generate', upload.single('file'), async (req, res) => {
-  const type = req.body.type;
-  const label = req.body.label || '';
-  const format = req.body.outputFormat || 'png';
-  const fgColor = req.body.fgColor || '#000000';
-  const bgColor = req.body.bgColor || '#ffffff';
-  const password = req.body.encrypt || '';
-  let data = '';
-
-  // Build QR content
+function prepareData(type, body) {
   switch (type) {
     case 'link':
+      return body.text || '';
+    case 'multi':
+      if (!body.multiLinks) return '';
+      // Join multiple URLs separated by newline
+      return body.multiLinks.split('\n').map(s => s.trim()).filter(s => s).join('\n');
     case 'text':
-      data = req.body.text || ' ';
-      break;
+      return body.text || '';
     case 'wifi':
-      const ssid = req.body.wifiSsid;
-      const enc = req.body.wifiEncryption;
-      const pwd = req.body.wifiPassword || '';
-      const encType = enc === 'NONE' ? 'nopass' : enc;
-      data = `WIFI:T:${encType};S:${ssid};P:${pwd};;`;
-      break;
+      // Format: WIFI:T:WPA;S:ssid;P:password;;
+      const enc = (body.wifiEncryption === 'NONE' ? 'nopass' : body.wifiEncryption) || 'WPA';
+      const ssid = body.wifiSsid || '';
+      const pass = body.wifiPassword || '';
+      if (!ssid) return '';
+      return `WIFI:T:${enc};S:${ssid};P:${pass};;`;
     case 'payment':
-      const email = (req.body.paymentEmail || '').toLowerCase();
-      let amount = parseFloat(req.body.paymentAmount || 0);
-      const cleanEmail = email.replace(/@|\./g, '');
-      data = `https://www.paypal.me/${cleanEmail}${amount ? '/' + amount : ''}`;
-      break;
+      const email = (body.paymentEmail || '').trim();
+      const amount = (body.paymentAmount || '').trim();
+      if (!email) return '';
+      return amount ? `paypal:${email}?amount=${amount}` : `paypal:${email}`;
     case 'file':
-      if (!req.file) return res.status(400).send('No file uploaded.');
-      const filePath = req.file.path;
-      const fileLink = `${req.protocol}://${req.get('host')}/${filePath}`;
-      data = fileLink;
-      break;
+      // file data handled separately
+      return null;
     default:
-      data = ' ';
+      return '';
   }
+}
 
-  // Encrypt data if password is set
-  const finalData = encryptIfNeeded(data, password);
-
+app.post('/generate', upload.fields([{ name: 'file' }, { name: 'logo' }]), async (req, res) => {
   try {
-    if (format === 'pdf') {
-      const doc = new PDFDocument();
-      const filename = `qr-${Date.now()}.pdf`;
-      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-      res.setHeader('Content-Type', 'application/pdf');
+    const type = req.body.type || 'link';
+    let dataToEncode = prepareData(type, req.body);
 
-      const tempPath = `temp-${Date.now()}.png`;
-      await QRCode.toFile(tempPath, finalData, {
-        color: { dark: fgColor, light: bgColor },
-        width: 300
+    // Handle file upload if type is 'file'
+    if (type === 'file') {
+      if (!req.files || !req.files.file || !req.files.file[0]) {
+        return res.status(400).send('No file uploaded');
+      }
+      // Convert file to base64 data URL
+      const file = req.files.file[0];
+      const mimeType = file.mimetype;
+      const base64Data = file.buffer.toString('base64');
+      dataToEncode = `data:${mimeType};base64,${base64Data}`;
+    }
+
+    if (!dataToEncode) return res.status(400).send('No data to encode');
+
+    // Encrypt if needed
+    const encryptPass = req.body.encrypt || '';
+    if (encryptPass) {
+      dataToEncode = encrypt(dataToEncode, encryptPass);
+    }
+
+    const fgColor = req.body.fgColor || '#000000';
+    const bgColor = req.body.bgColor || '#ffffff';
+    const label = req.body.label || '';
+    const outputFormat = (req.body.outputFormat || 'png').toLowerCase();
+
+    // Generate QR code as buffer or SVG string
+    let qrBuffer;
+    if (outputFormat === 'svg') {
+      qrBuffer = await QRCode.toString(dataToEncode, { type: 'svg', color: { dark: fgColor, light: bgColor } });
+    } else {
+      qrBuffer = await QRCode.toBuffer(dataToEncode, { type: 'png', color: { dark: fgColor, light: bgColor }, errorCorrectionLevel: 'H', margin: 2, width: 300 });
+    }
+
+    // If label or logo is needed, draw on canvas or generate PDF accordingly
+    if (outputFormat === 'pdf') {
+      const pdfDoc = await PDFDocument.create();
+      const page = pdfDoc.addPage([300, 360]);
+      const pngImage = await pdfDoc.embedPng(qrBuffer);
+
+      page.drawImage(pngImage, {
+        x: 0,
+        y: 60,
+        width: 300,
+        height: 300,
       });
 
-      doc.image(tempPath, 100, 100, { width: 200 });
       if (label) {
-        doc.fontSize(16).text(label, { align: 'center', baseline: 'bottom' });
+        const font = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+        page.drawText(label, {
+          x: 150,
+          y: 30,
+          size: 18,
+          font,
+          color: rgb(0, 0, 0),
+          xScale: 1,
+          yScale: 1,
+          maxWidth: 280,
+          align: 'center',
+          // PDF-lib doesn't support textAlign, center manually:
+        });
       }
 
-      doc.pipe(res);
-      doc.end();
-
-      setTimeout(() => {
-        fs.unlinkSync(tempPath);
-      }, 5000);
-    } else if (format === 'svg') {
-      const svg = await QRCode.toString(finalData, {
-        type: 'svg',
-        color: { dark: fgColor, light: bgColor },
-        width: 300
-      });
-      res.setHeader('Content-Disposition', 'attachment; filename="qr.svg"');
-      res.setHeader('Content-Type', 'image/svg+xml');
-      res.send(svg);
-    } else {
-      const buffer = await QRCode.toBuffer(finalData, {
-        color: { dark: fgColor, light: bgColor },
-        width: 300
-      });
-      res.setHeader('Content-Disposition', 'attachment; filename="qr.png"');
-      res.setHeader('Content-Type', 'image/png');
-      res.send(buffer);
+      const pdfBytes = await pdfDoc.save();
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', 'attachment; filename="qr-code.pdf"');
+      return res.send(Buffer.from(pdfBytes));
     }
+
+    if (outputFormat === 'svg') {
+      res.setHeader('Content-Type', 'image/svg+xml');
+      res.setHeader('Content-Disposition', 'attachment; filename="qr-code.svg"');
+      return res.send(qrBuffer);
+    }
+
+    // PNG path (including logo and label on a canvas server-side would require extra libs, so send plain PNG)
+    res.setHeader('Content-Type', 'image/png');
+    res.setHeader('Content-Disposition', 'attachment; filename="qr-code.png"');
+    return res.send(qrBuffer);
   } catch (err) {
-    console.error('QR error:', err);
-    res.status(500).send('Error generating QR code.');
+    console.error(err);
+    res.status(500).send('Server error: ' + err.message);
   }
 });
 
-// Serve uploaded files
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+// Serve your index.html and static files from /public
+// Place the above index.html inside a folder named 'public' next to this server.js
 
-// Start server
 app.listen(port, () => {
-  console.log(`✅ QR Code Generator running at http://localhost:${port}`);
+  console.log(`QR Code generator server running on http://localhost:${port}`);
 });
