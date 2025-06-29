@@ -34,11 +34,14 @@
       text-align: left;
       font-weight: bold;
     }
-    input[type=text], input[type=number], select {
+    input[type=text], input[type=number], select, textarea {
       width: 100%;
       padding: 8px;
       box-sizing: border-box;
       margin-top: 5px;
+      font-family: inherit;
+      font-size: 14px;
+      resize: vertical;
     }
     input[type=color] {
       width: 50px;
@@ -65,12 +68,21 @@
       font-size: 16px;
       cursor: pointer;
     }
+    small {
+      font-size: 0.9em;
+      color: #555;
+      display: block;
+      margin-top: 2px;
+      margin-bottom: 10px;
+      text-align: left;
+    }
   </style>
 </head>
 <body>
   <h1>Jack's QR Code Generator</h1>
   <div id="tabs">
     <button type="button" onclick="showTab('link')">🔗 Link</button>
+    <button type="button" onclick="showTab('multilinks')">🔗🔗 Multiple Links</button>
     <button type="button" onclick="showTab('text')">💬 Text</button>
     <button type="button" onclick="showTab('wifi')">📶 WiFi</button>
     <button type="button" onclick="showTab('payment')">💸 Payment</button>
@@ -82,6 +94,11 @@
     <div id="link" class="tab-content active">
       <label for="textLink">Enter URL:</label>
       <input type="text" id="textLink" name="text" placeholder="https://example.com" />
+    </div>
+
+    <div id="multilinks" class="tab-content">
+      <label for="multiLinksText">Enter multiple URLs (one per line):</label>
+      <textarea id="multiLinksText" name="multiLinksText" rows="6" placeholder="https://example1.com&#10;https://example2.com"></textarea>
     </div>
 
     <div id="text" class="tab-content">
@@ -105,8 +122,9 @@
     <div id="payment" class="tab-content">
       <label for="paymentEmail">PayPal Email:</label>
       <input type="text" id="paymentEmail" name="paymentEmail" placeholder="Payment to..." />
-      <label for="paymentAmount">Amount (optional):</label>
-      <input type="number" id="paymentAmount" name="paymentAmount" placeholder="Amount in USD" min="0" step="0.01" />
+      <label for="paymentAmount">Amount (optional, AUD):</label>
+      <input type="number" id="paymentAmount" name="paymentAmount" placeholder="Amount in AUD" min="0" step="0.01" />
+      <small>Payments will be requested in Australian Dollars (AUD).</small>
     </div>
 
     <label for="labelText">Optional Label (under QR):</label>
@@ -137,7 +155,7 @@
 
   <script src="https://cdn.jsdelivr.net/npm/qrcode/build/qrcode.min.js"></script>
   <script>
-    const tabs = ['link', 'text', 'wifi', 'payment'];
+    const tabs = ['link', 'multilinks', 'text', 'wifi', 'payment'];
     const qrTypeInput = document.getElementById('qrType');
     const previewCanvas = document.getElementById('previewCanvas');
     const ctx = previewCanvas.getContext('2d');
@@ -164,11 +182,13 @@
     document.getElementById('fgColor').addEventListener('input', updatePreview);
     document.getElementById('bgColor').addEventListener('input', updatePreview);
     document.getElementById('textLink').addEventListener('input', updatePreview);
+    document.getElementById('multiLinksText').addEventListener('input', updatePreview);
     document.getElementById('textText').addEventListener('input', updatePreview);
     document.getElementById('wifiSsid').addEventListener('input', updatePreview);
     document.getElementById('wifiPassword').addEventListener('input', updatePreview);
     document.getElementById('wifiEncryption').addEventListener('change', updatePreview);
     document.getElementById('paymentAmount').addEventListener('input', updatePreview);
+    document.getElementById('paymentEmail').addEventListener('input', updatePreview);
     outputFormatSelect.addEventListener('change', updatePreview);
 
     logoInput.addEventListener('change', () => {
@@ -203,6 +223,12 @@
       switch (type) {
         case 'link':
           return document.getElementById('textLink').value || ' ';
+        case 'multilinks':
+          const lines = document.getElementById('multiLinksText').value
+            .split('\n')
+            .map(l => l.trim())
+            .filter(l => l.length > 0);
+          return JSON.stringify(lines);
         case 'text':
           return document.getElementById('textText').value || ' ';
         case 'wifi':
@@ -236,11 +262,7 @@
         ctx.fillStyle = '#000';
         ctx.textAlign = 'center';
         ctx.fillText('SVG preview not supported.', previewCanvas.width / 2, previewCanvas.height / 2);
-        if (logoImg) {
-          logoPreview.style.display = 'inline-block';
-        } else {
-          logoPreview.style.display = 'none';
-        }
+        logoPreview.style.display = logoImg ? 'inline-block' : 'none';
         return;
       }
 
@@ -264,29 +286,49 @@
           }
 
           if (label) {
-            ctx.font = '20px Calibri, sans-serif';
+            ctx.font = '18px Calibri';
             ctx.fillStyle = fg;
             ctx.textAlign = 'center';
-            ctx.fillText(label, 150, 340);
+            ctx.fillText(label, 150, 335);
           }
         };
         qrImg.src = url;
       });
     }
 
-    // Initial preview
-    updatePreview();
-
     downloadBtn.addEventListener('click', () => {
-      if (outputFormatSelect.value === 'svg') {
-        alert('SVG preview download not supported. Please generate the final QR.');
+      const outputFormat = outputFormatSelect.value;
+
+      if (outputFormat === 'svg') {
+        alert('SVG download not implemented in preview. Please generate the final QR to get SVG.');
         return;
       }
+
       const link = document.createElement('a');
-      link.download = 'qr-preview.png';
-      link.href = previewCanvas.toDataURL('image/png');
-      link.click();
+      if (outputFormat === 'pdf') {
+        alert('PDF download not implemented in preview. Please generate the final QR to get PDF.');
+        return;
+      }
+
+      previewCanvas.toBlob(blob => {
+        if (!blob) {
+          alert('Could not generate preview image.');
+          return;
+        }
+        const url = URL.createObjectURL(blob);
+        link.href = url;
+        link.download = 'qr-code.' + outputFormat;
+        document.body.appendChild(link);
+        link.click();
+        setTimeout(() => {
+          URL.revokeObjectURL(url);
+          link.remove();
+        }, 100);
+      });
     });
+
+    // Initialize preview
+    updatePreview();
   </script>
 </body>
 </html>
