@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Full QR Code Generator App</title>
+  <title>Jack's QR Code Generator</title>
   <script src="https://cdn.jsdelivr.net/npm/qrcode/build/qrcode.min.js"></script>
   <style>
     body {
@@ -104,7 +104,7 @@
 
     <div id="payment" class="tab-content">
       <label for="paymentEmail">PayPal Email:</label>
-      <input type="text" id="paymentEmail" name="paymentEmail" value="jack.vanwijk@hotmail.com" readonly />
+       <input type="text" id="PaymentEmail" name="Payment To" placeholder="Payment to..." />
       <label for="paymentAmount">Amount (optional):</label>
       <input type="number" id="paymentAmount" name="paymentAmount" placeholder="Amount in USD" min="0" step="0.01" />
     </div>
@@ -120,6 +120,13 @@
 
     <label for="logoInput">Upload Logo (optional):</label>
     <input type="file" id="logoInput" name="logo" accept="image/*" />
+
+    <label for="outputFormat">Output Format:</label>
+    <select id="outputFormat" name="outputFormat">
+      <option value="png">PNG (Image)</option>
+      <option value="svg">SVG (Vector)</option>
+      <option value="pdf">PDF (Document)</option>
+    </select>
 
     <button id="downloadBtn" type="button">💾 Download Preview</button>
     <button type="submit" style="margin-left: 10px;">⬇️ Generate Final QR</button>
@@ -137,6 +144,7 @@
     const logoInput = document.getElementById('logoInput');
     const logoPreview = document.getElementById('logoPreview');
     const downloadBtn = document.getElementById('downloadBtn');
+    const outputFormatSelect = document.getElementById('outputFormat');
     let logoImg = null;
 
     function showTab(tabName) {
@@ -161,6 +169,7 @@
     document.getElementById('wifiPassword').addEventListener('input', updatePreview);
     document.getElementById('wifiEncryption').addEventListener('change', updatePreview);
     document.getElementById('paymentAmount').addEventListener('input', updatePreview);
+    outputFormatSelect.addEventListener('change', updatePreview);
 
     logoInput.addEventListener('change', () => {
       const file = logoInput.files[0];
@@ -206,7 +215,7 @@
           const email = document.getElementById('paymentEmail').value.toLowerCase();
           let amt = document.getElementById('paymentAmount').value;
           amt = amt && !isNaN(amt) && amt > 0 ? amt : '';
-          return `https://www.paypal.me/${email.replace(/@|\./g, '')}${amt ? '/' + amt : ''}`;
+          return `https://www.paypal.me/${email.replace(/@|\\./g, '')}${amt ? '/' + amt : ''}`;
         default:
           return ' ';
       }
@@ -217,8 +226,24 @@
       const fg = document.getElementById('fgColor').value;
       const bg = document.getElementById('bgColor').value;
       const label = document.getElementById('labelText').value;
+      const outputFormat = outputFormatSelect.value;
 
       ctx.clearRect(0, 0, previewCanvas.width, previewCanvas.height);
+
+      if (outputFormat === 'svg') {
+        // SVG preview not supported on canvas, show message instead
+        ctx.font = '16px Arial';
+        ctx.fillStyle = '#000';
+        ctx.textAlign = 'center';
+        ctx.fillText('SVG preview not supported.', previewCanvas.width / 2, previewCanvas.height / 2);
+        if (logoImg) {
+          // Show logo preview only
+          logoPreview.style.display = 'inline-block';
+        } else {
+          logoPreview.style.display = 'none';
+        }
+        return;
+      }
 
       QRCode.toDataURL(text, {
         color: { dark: fg, light: bg },
@@ -240,25 +265,4 @@
           }
 
           if (label) {
-            ctx.font = '20px Arial';
-            ctx.fillStyle = '#000';
-            ctx.textAlign = 'center';
-            ctx.fillText(label, 150, 340);
-          }
-        };
-        qrImg.src = url;
-      });
-    }
-
-    downloadBtn.addEventListener('click', () => {
-      const link = document.createElement('a');
-      link.download = 'qr-preview.png';
-      link.href = previewCanvas.toDataURL('image/png');
-      link.click();
-    });
-
-    // Initialize first tab and preview
-    showTab('link');
-  </script>
-</body>
-</html>
+            ctx.font =
