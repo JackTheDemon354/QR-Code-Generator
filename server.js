@@ -1,168 +1,167 @@
-// server.js
 const express = require('express');
 const multer = require('multer');
 const QRCode = require('qrcode');
-const crypto = require('crypto');
-const { PDFDocument, rgb, StandardFonts } = require('pdf-lib');
-const fs = require('fs');
+const bodyParser = require('body-parser');
 const path = require('path');
-
 const app = express();
-const port = process.env.PORT || 3000;
+const upload = multer({ limits: { fileSize: 5 * 1024 * 1024 } }); // max 5MB
 
-// Setup multer for file uploads, max 5MB
-const upload = multer({
-  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
-  storage: multer.memoryStorage(),
-});
+const PORT = process.env.PORT || 3000;
 
-app.use(express.urlencoded({ extended: true }));
-app.use(express.json());
-app.use(express.static('public')); // Serve your index.html and assets from /public
+// Serve static frontend files (adjust if your index.html is elsewhere)
+app.use(express.static(path.join(__dirname, 'public')));
+app.use(bodyParser.urlencoded({ extended: true }));
 
-// AES Encryption helper
-function encrypt(text, password) {
-  if (!password) return text;
-  const iv = crypto.randomBytes(16);
-  const key = crypto.scryptSync(password, 'salt', 32);
-  const cipher = crypto.createCipheriv('aes-256-cbc', key, iv);
-  const encrypted = Buffer.concat([cipher.update(text, 'utf8'), cipher.final()]);
-  return iv.toString('hex') + ':' + encrypted.toString('hex');
-}
-
-function decrypt(data, password) {
-  const [ivHex, encryptedHex] = data.split(':');
-  if (!ivHex || !encryptedHex) return null;
-  const iv = Buffer.from(ivHex, 'hex');
-  const encryptedText = Buffer.from(encryptedHex, 'hex');
-  const key = crypto.scryptSync(password, 'salt', 32);
-  const decipher = crypto.createDecipheriv('aes-256-cbc', key, iv);
-  const decrypted = Buffer.concat([decipher.update(encryptedText), decipher.final()]);
-  return decrypted.toString('utf8');
-}
-
-function prepareData(type, body) {
-  switch (type) {
-    case 'link':
-      return body.text || '';
-    case 'multi':
-      if (!body.multiLinks) return '';
-      // Join multiple URLs separated by newline
-      return body.multiLinks.split('\n').map(s => s.trim()).filter(s => s).join('\n');
-    case 'text':
-      return body.text || '';
-    case 'wifi':
-      // Format: WIFI:T:WPA;S:ssid;P:password;;
-      const enc = (body.wifiEncryption === 'NONE' ? 'nopass' : body.wifiEncryption) || 'WPA';
-      const ssid = body.wifiSsid || '';
-      const pass = body.wifiPassword || '';
-      if (!ssid) return '';
-      return `WIFI:T:${enc};S:${ssid};P:${pass};;`;
-    case 'payment':
-      const email = (body.paymentEmail || '').trim();
-      const amount = (body.paymentAmount || '').trim();
-      if (!email) return '';
-      return amount ? `paypal:${email}?amount=${amount}` : `paypal:${email}`;
-    case 'file':
-      // file data handled separately
-      return null;
-    default:
-      return '';
-  }
-}
-
-app.post('/generate', upload.fields([{ name: 'file' }, { name: 'logo' }]), async (req, res) => {
+// Route: Generate QR code image (POST from frontend form)
+app.post('/generate', upload.single('file'), async (req, res) => {
   try {
-    const type = req.body.type || 'link';
-    let dataToEncode = prepareData(type, req.body);
+    const {
+      type,
+      text,
+      wifiSsid,
+      wifiEncryption,
+      wifiPassword,
+      paymentEmail,
+      paymentAmount,
+      label,
+      encrypt,
+    } = req.body;
 
-    // Handle file upload if type is 'file'
-    if (type === 'file') {
-      if (!req.files || !req.files.file || !req.files.file[0]) {
-        return res.status(400).send('No file uploaded');
+    // Build QR data string depending on type
+    let qrData = '';
+
+    switch (type) {
+      case 'link':
+        qrData = text || ' ';
+        break;
+
+      case 'text':
+        qrData = text || ' ';
+        break;
+
+      case 'wifi':
+        const enc = wifiEncryption === 'NONE' ? 'nopass' : wifiEncryption.toUpperCase();
+        qrData = `WIFI:T:${enc};S:${wifiSsid || ''};P:${wifiPassword || ''};;`;
+        break;
+
+      case 'payment':
+        // Format PayPal.me URL in AUD
+        let amt = paymentAmount && !isNaN(paymentAmount) && paymentAmount > 0 ? paymentAmount : '';
+        const emailSanitized = (paymentEmail || '').toLowerCase().replace(/@|\./g, '');
+        qrData = `https://www.paypal.me/${emailSanitized}${amt ? '/' + amt : ''}`;
+        break;
+
+      case 'multiLinks':
+        // Expecting 'links' input as comma separated URLs from frontend form (or JSON string)
+        let linksRaw = req.body.links || '';
+        // Clean links: split by commas, trim, filter empty
+        let links = Array.isArray(linksRaw) ? linksRaw : linksRaw.split(',').map(s => s.trim()).filter(Boolean);
+        // Build JSON object
+        const obj = {
+          type: "multiLinks",
+          links: links
+        };
+        // Encode JSON as base64 and build URL to multilinks page
+        const jsonStr = JSON.stringify(obj);
+        const b64 = Buffer.from(jsonStr).toString('base64');
+        qrData = `${req.protocol}://${req.get('host')}/multilinks?data=${encodeURIComponent(b64)}`;
+        break;
+
+      case 'file':
+        if (!req.file) return res.status(400).send('No file uploaded.');
+        // For simplicity, we'll embed a data URL if file <5MB and type image or text
+        // (Better: upload file somewhere and generate a URL)
+        const mime = req.file.mimetype;
+        if (!mime.startsWith('image/') && !mime.startsWith('text/')) {
+          return res.status(400).send('Unsupported file type.');
+        }
+        const base64File = req.file.buffer.toString('base64');
+        qrData = `data:${mime};base64,${base64File}`;
+        break;
+
+      default:
+        qrData = ' ';
+        break;
+    }
+
+    // Encrypt if needed (AES)
+    const CryptoJS = require('crypto-js');
+    if (encrypt && encrypt.trim()) {
+      qrData = CryptoJS.AES.encrypt(qrData, encrypt.trim()).toString();
+    }
+
+    // Generate QR code image as PNG buffer
+    const qrImageBuffer = await QRCode.toBuffer(qrData, {
+      width: 300,
+      color: {
+        dark: '#000000',
+        light: '#ffffff'
       }
-      // Convert file to base64 data URL
-      const file = req.files.file[0];
-      const mimeType = file.mimetype;
-      const base64Data = file.buffer.toString('base64');
-      dataToEncode = `data:${mimeType};base64,${base64Data}`;
-    }
+    });
 
-    if (!dataToEncode) return res.status(400).send('No data to encode');
+    res.set('Content-Type', 'image/png');
+    res.send(qrImageBuffer);
 
-    // Encrypt if needed
-    const encryptPass = req.body.encrypt || '';
-    if (encryptPass) {
-      dataToEncode = encrypt(dataToEncode, encryptPass);
-    }
-
-    const fgColor = req.body.fgColor || '#000000';
-    const bgColor = req.body.bgColor || '#ffffff';
-    const label = req.body.label || '';
-    const outputFormat = (req.body.outputFormat || 'png').toLowerCase();
-
-    // Generate QR code as buffer or SVG string
-    let qrBuffer;
-    if (outputFormat === 'svg') {
-      qrBuffer = await QRCode.toString(dataToEncode, { type: 'svg', color: { dark: fgColor, light: bgColor } });
-    } else {
-      qrBuffer = await QRCode.toBuffer(dataToEncode, { type: 'png', color: { dark: fgColor, light: bgColor }, errorCorrectionLevel: 'H', margin: 2, width: 300 });
-    }
-
-    // If label or logo is needed, draw on canvas or generate PDF accordingly
-    if (outputFormat === 'pdf') {
-      const pdfDoc = await PDFDocument.create();
-      const page = pdfDoc.addPage([300, 360]);
-      const pngImage = await pdfDoc.embedPng(qrBuffer);
-
-      page.drawImage(pngImage, {
-        x: 0,
-        y: 60,
-        width: 300,
-        height: 300,
-      });
-
-      if (label) {
-        const font = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
-        page.drawText(label, {
-          x: 150,
-          y: 30,
-          size: 18,
-          font,
-          color: rgb(0, 0, 0),
-          xScale: 1,
-          yScale: 1,
-          maxWidth: 280,
-          align: 'center',
-          // PDF-lib doesn't support textAlign, center manually:
-        });
-      }
-
-      const pdfBytes = await pdfDoc.save();
-      res.setHeader('Content-Type', 'application/pdf');
-      res.setHeader('Content-Disposition', 'attachment; filename="qr-code.pdf"');
-      return res.send(Buffer.from(pdfBytes));
-    }
-
-    if (outputFormat === 'svg') {
-      res.setHeader('Content-Type', 'image/svg+xml');
-      res.setHeader('Content-Disposition', 'attachment; filename="qr-code.svg"');
-      return res.send(qrBuffer);
-    }
-
-    // PNG path (including logo and label on a canvas server-side would require extra libs, so send plain PNG)
-    res.setHeader('Content-Type', 'image/png');
-    res.setHeader('Content-Disposition', 'attachment; filename="qr-code.png"');
-    return res.send(qrBuffer);
   } catch (err) {
     console.error(err);
-    res.status(500).send('Server error: ' + err.message);
+    res.status(500).send('Server error');
   }
 });
 
-// Serve your index.html and static files from /public
-// Place the above index.html inside a folder named 'public' next to this server.js
+// Route: Multi-links page to display clickable links
+app.get('/multilinks', (req, res) => {
+  const { data } = req.query;
+  if (!data) return res.status(400).send('Missing data parameter.');
 
-app.listen(port, () => {
-  console.log(`QR Code generator server running on http://localhost:${port}`);
+  try {
+    const jsonStr = Buffer.from(data, 'base64').toString('utf8');
+    const obj = JSON.parse(jsonStr);
+
+    if (obj.type !== 'multiLinks' || !Array.isArray(obj.links)) {
+      return res.status(400).send('Invalid multiLinks data');
+    }
+
+    let html = `
+      <!DOCTYPE html>
+      <html lang="en">
+      <head>
+        <meta charset="UTF-8" />
+        <title>Multiple Links</title>
+        <style>
+          body { font-family: Arial, sans-serif; max-width: 600px; margin: 40px auto; padding: 20px; }
+          h1 { text-align: center; }
+          ul { list-style: none; padding-left: 0; }
+          li { margin: 10px 0; }
+          a { text-decoration: none; color: #0077cc; font-size: 1.2em; }
+          a:hover { text-decoration: underline; }
+        </style>
+      </head>
+      <body>
+        <h1>Multiple Links</h1>
+        <ul>
+    `;
+
+    obj.links.forEach(link => {
+      html += `<li><a href="${link}" target="_blank" rel="noopener noreferrer">${link}</a></li>`;
+    });
+
+    html += `
+        </ul>
+      </body>
+      </html>
+    `;
+
+    res.send(html);
+  } catch (e) {
+    res.status(400).send('Invalid data parameter');
+  }
+});
+
+// Serve index.html from /public (you will put your HTML here)
+app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+app.listen(PORT, () => {
+  console.log(`Server started on port ${PORT}`);
 });
