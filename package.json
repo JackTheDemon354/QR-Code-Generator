@@ -1,17 +1,16 @@
 {
-  "name": "qr-code-generator",
+  "name": "jack-qr-multilink",
   "version": "1.0.0",
-  "description": "QR Code Generator with multi-links, file upload, encryption, and PDF export",
+  "description": "QR code generator with multi-links support",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
-  "author": "JackTheDemon354",
-  "license": "MIT",
   "dependencies": {
     "express": "^4.18.2",
-    "multer": "^1.4.5-lts.1",
+    "multer": "^1.4.5",
     "qrcode": "^1.5.1",
-    "pdf-lib": "^1.17.1"
+    "body-parser": "^1.20.2",
+    "crypto-js": "^4.1.1"
   }
 }
