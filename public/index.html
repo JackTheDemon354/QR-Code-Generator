@@ -2,8 +2,9 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Jack's QR Code Generator with Encryption & File Upload</title>
+  <title>Jack's QR Code Generator</title>
   <script src="https://cdn.jsdelivr.net/npm/qrcode/build/qrcode.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
   <style>
     body {
       font-family: Calibri, Comic Sans MS;
@@ -11,6 +12,9 @@
       margin: auto;
       padding: 20px;
       text-align: center;
+    }
+    #tabs {
+      margin-bottom: 20px;
     }
     #tabs button {
       margin: 0 5px;
@@ -21,7 +25,6 @@
     .tab-content {
       display: none;
       margin-bottom: 20px;
-      text-align: left;
     }
     .tab-content.active {
       display: block;
@@ -29,16 +32,14 @@
     label {
       display: block;
       margin-top: 10px;
+      text-align: left;
       font-weight: bold;
     }
-    input[type=text], input[type=number], select, textarea {
+    input[type=text], input[type=number], select {
       width: 100%;
       padding: 8px;
       box-sizing: border-box;
-      font-family: inherit;
-      font-size: 14px;
       margin-top: 5px;
-      resize: vertical;
     }
     input[type=color] {
       width: 50px;
@@ -68,14 +69,13 @@
   </style>
 </head>
 <body>
-  <h1>Jack's QR Code Generator with Encryption & File Upload</h1>
+  <h1>Jack's QR Code Generator</h1>
   <div id="tabs">
     <button type="button" onclick="showTab('link')">🔗 Link</button>
-    <button type="button" onclick="showTab('multilinks')">🔗🔗 Multiple Links</button>
     <button type="button" onclick="showTab('text')">💬 Text</button>
     <button type="button" onclick="showTab('wifi')">📶 WiFi</button>
     <button type="button" onclick="showTab('payment')">💸 Payment</button>
-    <button type="button" onclick="showTab('file')">📁 File</button>
+    <button type="button" onclick="showTab('file')">📎 File</button>
   </div>
 
   <form id="qrForm" action="/generate" method="post" enctype="multipart/form-data">
@@ -84,11 +84,6 @@
     <div id="link" class="tab-content active">
       <label for="textLink">Enter URL:</label>
       <input type="text" id="textLink" name="text" placeholder="https://example.com" />
-    </div>
-
-    <div id="multilinks" class="tab-content">
-      <label for="multiLinksText">Enter multiple URLs (one per line):</label>
-      <textarea id="multiLinksText" name="multiLinksText" rows="6" placeholder="https://example1.com&#10;https://example2.com"></textarea>
     </div>
 
     <div id="text" class="tab-content">
@@ -117,16 +112,17 @@
     </div>
 
     <div id="file" class="tab-content">
-      <label for="fileUpload">Upload a file to encode:</label>
-      <input type="file" id="fileUpload" name="fileUpload" />
-      <small>Max file size depends on QR code data limits (~3KB recommended).</small>
+      <label for="fileUpload">Upload File (max 5MB):</label>
+      <input type="file" id="fileUpload" name="file" />
     </div>
-
-    <label for="encryptionPassword">Encryption Password (optional):</label>
-    <input type="text" id="encryptionPassword" name="encryptionPassword" placeholder="Enter password to encrypt QR data" />
 
     <label for="labelText">Optional Label (under QR):</label>
     <input type="text" id="labelText" name="label" placeholder="Label text here" />
+
+    <label for="encrypt">🔐 Optional Encryption Password:</label>
+    <input type="text" id="encrypt" name="encrypt" placeholder="Leave empty if no encryption" />
+
+    <button type="button" id="copyLinkBtn" style="display:none; margin-top: 10px;">🔗 Copy Decrypt Link</button>
 
     <label for="fgColor">Foreground Color:</label>
     <input type="color" id="fgColor" name="fgColor" value="#000000" />
@@ -151,9 +147,8 @@
   <canvas id="previewCanvas" width="300" height="360"></canvas>
   <img id="logoPreview" alt="Logo preview" />
 
-  <script src="https://cdn.jsdelivr.net/npm/qrcode/build/qrcode.min.js"></script>
   <script>
-    const tabs = ['link', 'multilinks', 'text', 'wifi', 'payment', 'file'];
+    const tabs = ['link', 'text', 'wifi', 'payment', 'file'];
     const qrTypeInput = document.getElementById('qrType');
     const previewCanvas = document.getElementById('previewCanvas');
     const ctx = previewCanvas.getContext('2d');
@@ -161,6 +156,9 @@
     const logoPreview = document.getElementById('logoPreview');
     const downloadBtn = document.getElementById('downloadBtn');
     const outputFormatSelect = document.getElementById('outputFormat');
+    const encryptInput = document.getElementById('encrypt');
+    const copyLinkBtn = document.getElementById('copyLinkBtn');
+    const fileUpload = document.getElementById('fileUpload');
     let logoImg = null;
 
     function showTab(tabName) {
@@ -179,16 +177,15 @@
     document.getElementById('labelText').addEventListener('input', updatePreview);
     document.getElementById('fgColor').addEventListener('input', updatePreview);
     document.getElementById('bgColor').addEventListener('input', updatePreview);
+    encryptInput.addEventListener('input', updatePreview);
+    outputFormatSelect.addEventListener('change', updatePreview);
     document.getElementById('textLink').addEventListener('input', updatePreview);
-    document.getElementById('multiLinksText').addEventListener('input', updatePreview);
     document.getElementById('textText').addEventListener('input', updatePreview);
     document.getElementById('wifiSsid').addEventListener('input', updatePreview);
     document.getElementById('wifiPassword').addEventListener('input', updatePreview);
     document.getElementById('wifiEncryption').addEventListener('change', updatePreview);
     document.getElementById('paymentAmount').addEventListener('input', updatePreview);
     document.getElementById('paymentEmail').addEventListener('input', updatePreview);
-    outputFormatSelect.addEventListener('change', updatePreview);
-    document.getElementById('fileUpload').addEventListener('change', updatePreview);
 
     logoInput.addEventListener('change', () => {
       const file = logoInput.files[0];
@@ -217,54 +214,50 @@
       return `WIFI:T:${enc};S:${ssid};P:${password || ''};;`;
     }
 
-    // Get raw QR data (unencrypted)
-    function getRawQRData() {
+    function getQRData() {
       const type = qrTypeInput.value;
       switch (type) {
-        case 'link':
-          return document.getElementById('textLink').value || ' ';
-        case 'multilinks':
-          const lines = document.getElementById('multiLinksText').value
-            .split('\n')
-            .map(l => l.trim())
-            .filter(l => l.length > 0);
-          return JSON.stringify(lines);
-        case 'text':
-          return document.getElementById('textText').value || ' ';
-        case 'wifi':
-          return generateWiFiString(
-            document.getElementById('wifiSsid').value,
-            document.getElementById('wifiEncryption').value,
-            document.getElementById('wifiPassword').value
-          );
+        case 'link': return document.getElementById('textLink').value || ' ';
+        case 'text': return document.getElementById('textText').value || ' ';
+        case 'wifi': return generateWiFiString(
+          document.getElementById('wifiSsid').value,
+          document.getElementById('wifiEncryption').value,
+          document.getElementById('wifiPassword').value
+        );
         case 'payment':
           const email = document.getElementById('paymentEmail').value.toLowerCase();
           let amt = document.getElementById('paymentAmount').value;
           amt = amt && !isNaN(amt) && amt > 0 ? amt : '';
-          return `https://www.paypal.me/${email.replace(/@|\\./g, '')}${amt ? '/' + amt : ''}`;
+          return `https://www.paypal.me/${email.replace(/@|\./g, '')}${amt ? '/' + amt : ''}`;
         case 'file':
-          // File preview not supported on client (too complex), just show message
-          return 'File upload - preview unavailable';
-        default:
-          return ' ';
+          // For file, no preview data to generate here (must wait for backend)
+          return '';
+        default: return ' ';
       }
     }
 
-    function updatePreview() {
-      const rawData = getRawQRData();
-      const encryptionPassword = document.getElementById('encryptionPassword').value;
-      let text = rawData;
+    function encryptIfNeeded(data) {
+      const password = encryptInput.value.trim();
+      if (!password) return data;
+      return CryptoJS.AES.encrypt(data, password).toString();
+    }
 
-      // If encryption password entered and not empty, encrypt data
-      if (encryptionPassword.trim() !== '') {
-        try {
-          // Use CryptoJS AES encryption
-          text = CryptoJS.AES.encrypt(rawData, encryptionPassword).toString();
-        } catch(e) {
-          console.error('Encryption error:', e);
-        }
+    function updatePreview() {
+      const type = qrTypeInput.value;
+
+      // For file tab, no preview from client (needs backend generation)
+      if (type === 'file') {
+        copyLinkBtn.style.display = 'none';
+        ctx.clearRect(0, 0, previewCanvas.width, previewCanvas.height);
+        ctx.font = '16px Arial';
+        ctx.fillStyle = '#000';
+        ctx.textAlign = 'center';
+        ctx.fillText('Preview not available for file uploads.', previewCanvas.width / 2, previewCanvas.height / 2);
+        return;
       }
 
+      const data = getQRData();
+      const encryptedData = encryptIfNeeded(data);
       const fg = document.getElementById('fgColor').value;
       const bg = document.getElementById('bgColor').value;
       const label = document.getElementById('labelText').value;
@@ -272,39 +265,45 @@
 
       ctx.clearRect(0, 0, previewCanvas.width, previewCanvas.height);
 
+      if (encryptInput.value.trim()) {
+        const link = `${window.location.origin}/decrypt?data=${encodeURIComponent(encryptedData)}`;
+        copyLinkBtn.style.display = 'inline-block';
+        copyLinkBtn.onclick = () => {
+          navigator.clipboard.writeText(link).then(() => {
+            alert("🔗 Decrypt link copied!");
+          });
+        };
+      } else {
+        copyLinkBtn.style.display = 'none';
+      }
+
       if (outputFormat === 'svg') {
         ctx.font = '16px Arial';
         ctx.fillStyle = '#000';
         ctx.textAlign = 'center';
         ctx.fillText('SVG preview not supported.', previewCanvas.width / 2, previewCanvas.height / 2);
-        logoPreview.style.display = logoImg ? 'inline-block' : 'none';
         return;
       }
 
-      QRCode.toDataURL(text, {
+      QRCode.toDataURL(encryptedData, {
         color: { dark: fg, light: bg },
         width: 300
       }, (err, url) => {
-        if (err) {
-          console.error(err);
-          return;
-        }
+        if (err) return console.error(err);
         const qrImg = new Image();
         qrImg.onload = () => {
           ctx.drawImage(qrImg, 0, 0, 300, 300);
-
           if (logoImg) {
             const size = 75;
             const x = (300 - size) / 2;
             const y = (300 - size) / 2;
             ctx.drawImage(logoImg, x, y, size, size);
           }
-
           if (label) {
-            ctx.font = '18px Calibri';
-            ctx.fillStyle = fg;
+            ctx.font = '16px Arial';
+            ctx.fillStyle = '#000';
             ctx.textAlign = 'center';
-            ctx.fillText(label, 150, 335);
+            ctx.fillText(label, previewCanvas.width / 2, 350);
           }
         };
         qrImg.src = url;
@@ -312,14 +311,14 @@
     }
 
     downloadBtn.addEventListener('click', () => {
-      alert('Preview download disabled for encryption & file support. Please generate final QR to download.');
+      const link = document.createElement('a');
+      link.download = 'qr-preview.png';
+      link.href = previewCanvas.toDataURL('image/png');
+      link.click();
     });
 
     showTab('link');
     updatePreview();
   </script>
-
-  <!-- CryptoJS AES library for encryption -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
 </body>
 </html>
