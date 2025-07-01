@@ -1,167 +1,116 @@
-const express = require('express');
-const multer = require('multer');
-const QRCode = require('qrcode');
-const bodyParser = require('body-parser');
-const path = require('path');
+const express = require("express");
+const multer = require("multer");
+const QRCode = require("qrcode");
+const PDFDocument = require("pdfkit");
+const fs = require("fs");
+const path = require("path");
+const crypto = require("crypto");
+
 const app = express();
-const upload = multer({ limits: { fileSize: 5 * 1024 * 1024 } }); // max 5MB
+const port = process.env.PORT || 3000;
 
-const PORT = process.env.PORT || 3000;
+app.use(express.static("public"));
+app.use(express.urlencoded({ extended: true }));
+app.use(express.json());
 
-// Serve static frontend files (adjust if your index.html is elsewhere)
-app.use(express.static(path.join(__dirname, 'public')));
-app.use(bodyParser.urlencoded({ extended: true }));
+const uploadsDir = path.join(__dirname, "uploads");
+if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir);
 
-// Route: Generate QR code image (POST from frontend form)
-app.post('/generate', upload.single('file'), async (req, res) => {
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, uploadsDir),
+  filename: (req, file, cb) => cb(null, Date.now() + "-" + file.originalname),
+});
+const upload = multer({ storage });
+
+function encrypt(text, password) {
+  const cipher = crypto.createCipher("aes-256-cbc", password);
+  let encrypted = cipher.update(text, "utf8", "hex");
+  encrypted += cipher.final("hex");
+  return encrypted;
+}
+
+app.post("/generate", upload.single("file"), async (req, res) => {
+  const {
+    type,
+    text,
+    multiLinks,
+    wifiSsid,
+    wifiEncryption,
+    wifiPassword,
+    paymentEmail,
+    paymentAmount,
+    fgColor,
+    bgColor,
+    outputFormat,
+    label,
+    encrypt,
+  } = req.body;
+
+  let qrData = "";
+
+  if (type === "link") {
+    qrData = text || "";
+  } else if (type === "multilink") {
+    const links = multiLinks?.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+    qrData = links.join("\n");
+  } else if (type === "text") {
+    qrData = text || "";
+  } else if (type === "wifi") {
+    const enc = wifiEncryption === "NONE" ? "nopass" : wifiEncryption;
+    qrData = `WIFI:T:${enc};S:${wifiSsid};P:${wifiPassword || ""};;`;
+  } else if (type === "payment") {
+    const email = (paymentEmail || "").toLowerCase().replace(/@|\./g, "");
+    qrData = `https://www.paypal.me/${email}${paymentAmount ? "/" + paymentAmount : ""}`;
+  } else if (type === "file" && req.file) {
+    const fullUrl = req.protocol + "://" + req.get("host") + "/uploads/" + req.file.filename;
+    qrData = fullUrl;
+  }
+
+  if (encrypt) {
+    qrData = `https://your-site.com/decrypt?data=${encryptText(qrData, encrypt)}`;
+  }
+
   try {
-    const {
-      type,
-      text,
-      wifiSsid,
-      wifiEncryption,
-      wifiPassword,
-      paymentEmail,
-      paymentAmount,
-      label,
-      encrypt,
-    } = req.body;
+    const color = {
+      dark: fgColor || "#000000",
+      light: bgColor || "#FFFFFF",
+    };
 
-    // Build QR data string depending on type
-    let qrData = '';
+    if (outputFormat === "svg") {
+      const svg = await QRCode.toString(qrData, { type: "svg", color });
+      res.set("Content-Type", "image/svg+xml").send(svg);
+    } else if (outputFormat === "pdf") {
+      const tempPath = path.join(__dirname, "temp.png");
+      await QRCode.toFile(tempPath, qrData, { color, width: 300 });
 
-    switch (type) {
-      case 'link':
-        qrData = text || ' ';
-        break;
-
-      case 'text':
-        qrData = text || ' ';
-        break;
-
-      case 'wifi':
-        const enc = wifiEncryption === 'NONE' ? 'nopass' : wifiEncryption.toUpperCase();
-        qrData = `WIFI:T:${enc};S:${wifiSsid || ''};P:${wifiPassword || ''};;`;
-        break;
-
-      case 'payment':
-        // Format PayPal.me URL in AUD
-        let amt = paymentAmount && !isNaN(paymentAmount) && paymentAmount > 0 ? paymentAmount : '';
-        const emailSanitized = (paymentEmail || '').toLowerCase().replace(/@|\./g, '');
-        qrData = `https://www.paypal.me/${emailSanitized}${amt ? '/' + amt : ''}`;
-        break;
-
-      case 'multiLinks':
-        // Expecting 'links' input as comma separated URLs from frontend form (or JSON string)
-        let linksRaw = req.body.links || '';
-        // Clean links: split by commas, trim, filter empty
-        let links = Array.isArray(linksRaw) ? linksRaw : linksRaw.split(',').map(s => s.trim()).filter(Boolean);
-        // Build JSON object
-        const obj = {
-          type: "multiLinks",
-          links: links
-        };
-        // Encode JSON as base64 and build URL to multilinks page
-        const jsonStr = JSON.stringify(obj);
-        const b64 = Buffer.from(jsonStr).toString('base64');
-        qrData = `${req.protocol}://${req.get('host')}/multilinks?data=${encodeURIComponent(b64)}`;
-        break;
-
-      case 'file':
-        if (!req.file) return res.status(400).send('No file uploaded.');
-        // For simplicity, we'll embed a data URL if file <5MB and type image or text
-        // (Better: upload file somewhere and generate a URL)
-        const mime = req.file.mimetype;
-        if (!mime.startsWith('image/') && !mime.startsWith('text/')) {
-          return res.status(400).send('Unsupported file type.');
-        }
-        const base64File = req.file.buffer.toString('base64');
-        qrData = `data:${mime};base64,${base64File}`;
-        break;
-
-      default:
-        qrData = ' ';
-        break;
+      const doc = new PDFDocument({ size: "A4" });
+      res.setHeader("Content-Type", "application/pdf");
+      doc.pipe(res);
+      doc.image(tempPath, 150, 150, { width: 300 });
+      if (label) doc.text(label, 150, 470, { align: "center", width: 300 });
+      doc.end();
+    } else {
+      res.set("Content-Type", "image/png");
+      await QRCode.toFileStream(res, qrData, { color, width: 300 });
     }
-
-    // Encrypt if needed (AES)
-    const CryptoJS = require('crypto-js');
-    if (encrypt && encrypt.trim()) {
-      qrData = CryptoJS.AES.encrypt(qrData, encrypt.trim()).toString();
-    }
-
-    // Generate QR code image as PNG buffer
-    const qrImageBuffer = await QRCode.toBuffer(qrData, {
-      width: 300,
-      color: {
-        dark: '#000000',
-        light: '#ffffff'
-      }
-    });
-
-    res.set('Content-Type', 'image/png');
-    res.send(qrImageBuffer);
-
   } catch (err) {
-    console.error(err);
-    res.status(500).send('Server error');
+    console.error("QR generation error:", err);
+    res.status(500).send("Failed to generate QR");
   }
 });
 
-// Route: Multi-links page to display clickable links
-app.get('/multilinks', (req, res) => {
-  const { data } = req.query;
-  if (!data) return res.status(400).send('Missing data parameter.');
-
-  try {
-    const jsonStr = Buffer.from(data, 'base64').toString('utf8');
-    const obj = JSON.parse(jsonStr);
-
-    if (obj.type !== 'multiLinks' || !Array.isArray(obj.links)) {
-      return res.status(400).send('Invalid multiLinks data');
-    }
-
-    let html = `
-      <!DOCTYPE html>
-      <html lang="en">
-      <head>
-        <meta charset="UTF-8" />
-        <title>Multiple Links</title>
-        <style>
-          body { font-family: Arial, sans-serif; max-width: 600px; margin: 40px auto; padding: 20px; }
-          h1 { text-align: center; }
-          ul { list-style: none; padding-left: 0; }
-          li { margin: 10px 0; }
-          a { text-decoration: none; color: #0077cc; font-size: 1.2em; }
-          a:hover { text-decoration: underline; }
-        </style>
-      </head>
-      <body>
-        <h1>Multiple Links</h1>
-        <ul>
-    `;
-
-    obj.links.forEach(link => {
-      html += `<li><a href="${link}" target="_blank" rel="noopener noreferrer">${link}</a></li>`;
-    });
-
-    html += `
-        </ul>
-      </body>
-      </html>
-    `;
-
-    res.send(html);
-  } catch (e) {
-    res.status(400).send('Invalid data parameter');
-  }
+app.get("/uploads/:filename", (req, res) => {
+  const file = path.join(uploadsDir, req.params.filename);
+  if (fs.existsSync(file)) res.sendFile(file);
+  else res.status(404).send("File not found");
 });
 
-// Serve index.html from /public (you will put your HTML here)
-app.get('/', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
-});
+app.listen(port, () => console.log(`QR Generator running on http://localhost:${port}`));
 
-app.listen(PORT, () => {
-  console.log(`Server started on port ${PORT}`);
-});
+function encryptText(text, password) {
+  const iv = crypto.randomBytes(16);
+  const key = crypto.scryptSync(password, "salt", 32);
+  const cipher = crypto.createCipheriv("aes-256-cbc", key, iv);
+  const encrypted = Buffer.concat([cipher.update(text, "utf8"), cipher.final()]);
+  return iv.toString("hex") + ":" + encrypted.toString("hex");
+}
