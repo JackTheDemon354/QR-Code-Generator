@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <title>Decrypt QR Code</title>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/node-forge@1.3.1/dist/forge.min.js"></script>
   <style>
     body {
       font-family: Calibri, Comic Sans MS;
@@ -54,37 +54,41 @@
     }
 
     function decrypt() {
-      const encrypted = document.getElementById('encrypted').value.trim();
+      const input = document.getElementById('encrypted').value.trim();
       const password = document.getElementById('password').value.trim();
       const resultDiv = document.getElementById('result');
 
-      if (!encrypted || !password) {
-        resultDiv.innerHTML = '❗ Please enter both encrypted data and password.';
+      if (!input || !password) {
+        resultDiv.innerText = "❗ Enter both encrypted data and password.";
         return;
       }
 
       try {
-        const [ivHex, encryptedHex] = encrypted.split(":");
-        const iv = CryptoJS.enc.Hex.parse(ivHex);
-        const encryptedData = CryptoJS.enc.Hex.parse(encryptedHex);
-        const key = CryptoJS.PBKDF2(password, CryptoJS.enc.Utf8.parse("salt"), {
-          keySize: 256 / 32,
-          iterations: 1000
-        });
-        const decrypted = CryptoJS.AES.decrypt({ ciphertext: encryptedData }, key, {
-          iv: iv,
-          mode: CryptoJS.mode.CBC,
-          padding: CryptoJS.pad.Pkcs7
+        const [ivHex, encryptedHex] = input.split(":");
+        const iv = forge.util.hexToBytes(ivHex);
+        const encrypted = forge.util.hexToBytes(encryptedHex);
+
+        // Generate key using scrypt
+        forge.scrypt(password, 'salt', 32, { N: 16384, r: 8, p: 1 }, (err, key) => {
+          if (err) {
+            resultDiv.innerText = "❌ Error with scrypt.";
+            return;
+          }
+
+          const decipher = forge.cipher.createDecipher('AES-CBC', key);
+          decipher.start({ iv: iv });
+          decipher.update(forge.util.createBuffer(encrypted));
+          const pass = decipher.finish();
+
+          if (pass) {
+            resultDiv.innerHTML = `<strong>✅ Decrypted:</strong><br><br><pre>${decipher.output.toString()}</pre>`;
+          } else {
+            resultDiv.innerText = "❌ Incorrect password or corrupted data.";
+          }
         });
 
-        const plainText = decrypted.toString(CryptoJS.enc.Utf8);
-        if (plainText) {
-          resultDiv.innerHTML = `<strong>✅ Decrypted Data:</strong><br><br><pre>${plainText}</pre>`;
-        } else {
-          resultDiv.innerHTML = '❌ Incorrect password or invalid data.';
-        }
       } catch (e) {
-        resultDiv.innerHTML = '❌ Error during decryption.';
+        resultDiv.innerText = "❌ Decryption failed.";
       }
     }
   </script>
