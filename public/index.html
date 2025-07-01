@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <title>Jack's QR Code Generator</title>
-  <script src="https://cdn.jsdelivr.net/npm/qrcode/build/qrcode.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/qrcode/build/qrcode.min.js"></script> 
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" />
   <style>
     body {
       font-family: Calibri, Comic Sans MS;
@@ -14,14 +14,13 @@
       text-align: center;
       background: linear-gradient(to bottom right, #e0f7fa, #f1f8e9);
     }
-    #tabs { margin-bottom: 20px; }
     #tabs button {
       margin: 0 5px;
       padding: 10px 15px;
       font-size: 16px;
       cursor: pointer;
     }
-    .tab-content { display: none; margin-bottom: 20px; }
+    .tab-content { display: none; margin-top: 20px; }
     .tab-content.active { display: block; }
     label {
       display: block;
@@ -29,18 +28,11 @@
       text-align: left;
       font-weight: bold;
     }
-    input[type=text], input[type=number], select, textarea {
+    input, select, textarea {
       width: 100%;
       padding: 8px;
       box-sizing: border-box;
       margin-top: 5px;
-    }
-    input[type=color] {
-      width: 50px;
-      height: 30px;
-      border: none;
-      margin-top: 5px;
-      cursor: pointer;
     }
     #previewCanvas {
       border: 1px solid #ccc;
@@ -54,91 +46,125 @@
       margin-top: 10px;
       display: none;
     }
-    #downloadBtn {
+    button {
       margin-top: 10px;
       padding: 10px 20px;
       font-size: 16px;
-      cursor: pointer;
     }
   </style>
 </head>
 <body>
   <h1>Jack's QR Code Generator</h1>
+
   <div id="tabs">
     <button type="button" onclick="showTab('link')">🔗 Link</button>
-    <button type="button" onclick="showTab('multilink')">🔗 Multi-Link</button>
+    <button type="button" onclick="showTab('multilink')">🧷 Multi-Link</button>
     <button type="button" onclick="showTab('text')">💬 Text</button>
     <button type="button" onclick="showTab('wifi')">📶 WiFi</button>
     <button type="button" onclick="showTab('file')">📁 File</button>
     <button type="button" onclick="showTab('payment')">💸 Payment</button>
   </div>
-
+<footer>
+    <div class="icon-bar">
+      <div>
+        <a href="https://discord.gg/2mma7eXnxG" target="_blank" title="Jack's Discord Server">
+          <i class="fab fa-discord"></i>
+          <span>Discord</span>
+        </a>
+      </div>
+      <div>
+        <a href="https://www.xbox.com/en-au/play/user/JackTheDemon354?xr=shellnav" target="_blank" title="JackTheDemon354's Xbox">
+          <i class="fab fa-xbox"></i>
+          <span>Xbox</span>
+        </a>
+      </div>
+      <div>
+        <a href="mailto:Jack.vanwijk@hotmail.com" title="Jack's Hotmail">
+          <i class="fas fa-envelope"></i>
+          <span>Hotmail</span>
+        </a>
+      </div>
+      <div>
+        <a href="mailto:Jackdavidvanwijk@gmail.com" title="Jack's Gmail">
+          <i class="fas fa-envelope"></i>
+          <span>Gmail</span>
+        </a>
+      </div>
+      <div>
+        <a href="mailto:Jack.VanWijk@student.ggs.wa.edu.au" title="Jack's School Email">
+          <i class="fas fa-envelope"></i>
+          <span>School Email</span>
+        </a>
+      </div>
+    </div>
+  </footer>
   <form id="qrForm" action="/generate" method="post" enctype="multipart/form-data">
     <input type="hidden" name="type" id="qrType" value="link" />
 
     <div id="link" class="tab-content active">
-      <label for="textLink">Enter URL:</label>
+      <label>Enter URL:</label>
       <input type="text" id="textLink" name="text" placeholder="https://example.com" />
     </div>
 
     <div id="multilink" class="tab-content">
-      <label for="multiLinks">Enter Multiple Links (one per line):</label>
-      <textarea id="multiLinks" name="multiLinks" rows="5" placeholder="https://site1.com\nhttps://site2.com"></textarea>
+      <label>Enter Multiple Links (one per line):</label>
+      <textarea id="multiLinks" rows="4" placeholder="https://link1.com&#10;https://link2.com"></textarea>
     </div>
 
     <div id="text" class="tab-content">
-      <label for="textText">Enter Text:</label>
+      <label>Enter Text:</label>
       <input type="text" id="textText" name="text" placeholder="Some text here" />
     </div>
 
     <div id="wifi" class="tab-content">
-      <label for="wifiSsid">WiFi SSID:</label>
+      <label>WiFi SSID:</label>
       <input type="text" id="wifiSsid" name="wifiSsid" />
-      <label for="wifiEncryption">Encryption:</label>
+      <label>Encryption:</label>
       <select id="wifiEncryption" name="wifiEncryption">
         <option value="WPA">WPA/WPA2</option>
         <option value="WEP">WEP</option>
         <option value="NONE">None</option>
       </select>
-      <label for="wifiPassword">Password:</label>
+      <label>Password:</label>
       <input type="text" id="wifiPassword" name="wifiPassword" />
     </div>
 
     <div id="file" class="tab-content">
-      <label for="fileUpload">Upload File:</label>
+      <label>Upload File:</label>
       <input type="file" id="fileUpload" name="file" />
     </div>
 
     <div id="payment" class="tab-content">
-      <label for="paymentEmail">PayPal Email:</label>
-      <input type="text" id="paymentEmail" name="paymentEmail" />
-      <label for="paymentAmount">Amount (AUD):</label>
-      <input type="number" id="paymentAmount" name="paymentAmount" min="0" step="0.01" />
+      <label>PayPal Email:</label>
+      <input type="text" id="paymentEmail" name="paymentTo" value="jack.vanwijk@hotmail.com" />
+      <label>Amount (AUD):</label>
+      <input type="number" id="paymentAmount" name="paymentAmount" placeholder="e.g. 10.00" step="0.01" />
     </div>
 
-    <label for="labelText">Label (optional):</label>
+    <label>Label under QR (optional):</label>
     <input type="text" id="labelText" name="label" />
 
-    <label for="fgColor">Foreground Color:</label>
-    <input type="color" id="fgColor" name="fgColor" value="#000000" />
+    <label>Foreground Color:</label>
+    <input type="color" id="fgColor" value="#000000" />
+    <label>Background Color:</label>
+    <input type="color" id="bgColor" value="#ffffff" />
 
-    <label for="bgColor">Background Color:</label>
-    <input type="color" id="bgColor" name="bgColor" value="#ffffff" />
-
-    <label for="logoInput">Upload Logo (optional):</label>
+    <label>Logo (optional):</label>
     <input type="file" id="logoInput" name="logo" accept="image/*" />
 
-    <label for="outputFormat">Output Format:</label>
+    <label>Password to Encrypt (optional):</label>
+    <input type="text" id="encrypt" name="encrypt" placeholder="Leave blank for no encryption" />
+    <button type="button" id="copyDecryptBtn" style="display:none;">🔗 Copy Decrypt Link</button>
+
+    <label>Output Format:</label>
     <select id="outputFormat" name="outputFormat">
       <option value="png">PNG</option>
       <option value="svg">SVG</option>
       <option value="pdf">PDF</option>
     </select>
 
-    <label for="encryptText">Optional Password (encrypt QR content):</label>
-    <input type="text" id="encryptText" name="encrypt" placeholder="Leave empty for none" />
-
-    <button id="downloadBtn" type="submit">⬇️ Generate Final QR</button>
+    <button type="button" id="downloadBtn">💾 Download Preview</button>
+    <button type="submit">⬇️ Generate Final QR</button>
   </form>
 
   <canvas id="previewCanvas" width="300" height="360"></canvas>
@@ -147,14 +173,146 @@
   <script>
     const tabs = ['link', 'multilink', 'text', 'wifi', 'file', 'payment'];
     const qrTypeInput = document.getElementById('qrType');
+    const previewCanvas = document.getElementById('previewCanvas');
+    const ctx = previewCanvas.getContext('2d');
+    const logoInput = document.getElementById('logoInput');
+    const logoPreview = document.getElementById('logoPreview');
+    const outputFormatSelect = document.getElementById('outputFormat');
+    const copyBtn = document.getElementById('copyDecryptBtn');
+    let logoImg = null;
 
     function showTab(tabName) {
-      tabs.forEach(tab => {
-        document.getElementById(tab).classList.remove('active');
-      });
+      tabs.forEach(t => document.getElementById(t).classList.remove('active'));
       document.getElementById(tabName).classList.add('active');
       qrTypeInput.value = tabName;
+      updatePreview();
     }
+
+    function generateWiFiString(ssid, encryption, password) {
+      const enc = encryption === 'NONE' ? 'nopass' : encryption;
+      return `WIFI:T:${enc};S:${ssid};P:${password || ''};;`;
+    }
+
+    function getQRData() {
+      const type = qrTypeInput.value;
+      switch (type) {
+        case 'link':
+          return document.getElementById('textLink').value || ' ';
+        case 'multilink':
+          return document.getElementById('multiLinks').value || ' ';
+        case 'text':
+          return document.getElementById('textText').value || ' ';
+        case 'wifi':
+          return generateWiFiString(
+            document.getElementById('wifiSsid').value,
+            document.getElementById('wifiEncryption').value,
+            document.getElementById('wifiPassword').value
+          );
+        case 'file':
+          return 'Uploading file...'; // placeholder text
+        case 'payment':
+          const email = document.getElementById('paymentEmail').value.toLowerCase();
+          const amount = document.getElementById('paymentAmount').value;
+          return `https://www.paypal.me/${email.replace(/[@.]/g, '')}${amount ? '/' + amount : ''}`;
+        default:
+          return ' ';
+      }
+    }
+
+    function updateDecryptLink(qrContent) {
+      const password = document.getElementById("encrypt").value;
+      if (!password || !qrContent) return copyBtn.style.display = "none";
+
+      fetch("/generate-decrypt-link", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: qrContent, password })
+      })
+        .then(res => res.json())
+        .then(data => {
+          if (data.link) {
+            copyBtn.style.display = "inline-block";
+            copyBtn.onclick = () => {
+              navigator.clipboard.writeText(data.link);
+              copyBtn.textContent = "✅ Copied!";
+              setTimeout(() => copyBtn.textContent = "🔗 Copy Decrypt Link", 2000);
+            };
+          }
+        });
+    }
+
+    function updatePreview() {
+      const text = getQRData();
+      const fg = document.getElementById('fgColor').value;
+      const bg = document.getElementById('bgColor').value;
+      const label = document.getElementById('labelText').value;
+      const format = outputFormatSelect.value;
+
+      updateDecryptLink(text);
+
+      ctx.clearRect(0, 0, previewCanvas.width, previewCanvas.height);
+      if (format === 'svg') {
+        ctx.font = '16px Arial';
+        ctx.fillText('SVG preview not supported on canvas', 20, 150);
+        return;
+      }
+
+      QRCode.toDataURL(text, {
+        color: { dark: fg, light: bg },
+        width: 300
+      }, (err, url) => {
+        if (err) return;
+        const qrImg = new Image();
+        qrImg.onload = () => {
+          ctx.drawImage(qrImg, 0, 0, 300, 300);
+          if (logoImg) {
+            ctx.drawImage(logoImg, 112, 112, 75, 75);
+          }
+          if (label) {
+            ctx.font = "bold 16px Arial";
+            ctx.fillStyle = fg;
+            ctx.textAlign = "center";
+            ctx.fillText(label, 150, 350);
+          }
+        };
+        qrImg.src = url;
+      });
+    }
+
+    outputFormatSelect.addEventListener("change", updatePreview);
+    document.querySelectorAll("input, textarea, select").forEach(el => el.addEventListener("input", updatePreview));
+
+    logoInput.addEventListener("change", () => {
+      const file = logoInput.files[0];
+      if (!file) return logoImg = logoPreview.style.display = "none";
+      const reader = new FileReader();
+      reader.onload = e => {
+        logoImg = new Image();
+        logoImg.onload = updatePreview;
+        logoPreview.src = e.target.result;
+        logoPreview.style.display = "block";
+        logoImg.src = e.target.result;
+      };
+      reader.readAsDataURL(file);
+    });
+
+    document.getElementById("qrForm").addEventListener("submit", e => {
+      const type = qrTypeInput.value;
+      if (type === "multilink") {
+        const val = document.getElementById("multiLinks").value;
+        const input = document.createElement("input");
+        input.type = "hidden";
+        input.name = "multiLinks";
+        input.value = val;
+        e.target.appendChild(input);
+      }
+      if (type === "file" && !document.getElementById("fileUpload").value) {
+        e.preventDefault();
+        alert("Please choose a file to upload.");
+      }
+    });
+
+    updatePreview();
   </script>
 </body>
 </html>
