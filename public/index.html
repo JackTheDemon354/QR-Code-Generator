@@ -12,23 +12,17 @@
       margin: auto;
       padding: 20px;
       text-align: center;
+      background: linear-gradient(to bottom right, #e0f7fa, #f1f8e9);
     }
-    #tabs {
-      margin-bottom: 20px;
-    }
+    #tabs { margin-bottom: 20px; }
     #tabs button {
       margin: 0 5px;
       padding: 10px 15px;
       font-size: 16px;
       cursor: pointer;
     }
-    .tab-content {
-      display: none;
-      margin-bottom: 20px;
-    }
-    .tab-content.active {
-      display: block;
-    }
+    .tab-content { display: none; margin-bottom: 20px; }
+    .tab-content.active { display: block; }
     label {
       display: block;
       margin-top: 10px;
@@ -72,14 +66,14 @@
   <h1>Jack's QR Code Generator</h1>
   <div id="tabs">
     <button type="button" onclick="showTab('link')">🔗 Link</button>
-    <button type="button" onclick="showTab('multiLinks')">🧩 Multi-Links</button>
+    <button type="button" onclick="showTab('multilink')">🔗 Multi-Link</button>
     <button type="button" onclick="showTab('text')">💬 Text</button>
     <button type="button" onclick="showTab('wifi')">📶 WiFi</button>
+    <button type="button" onclick="showTab('file')">📁 File</button>
     <button type="button" onclick="showTab('payment')">💸 Payment</button>
-    <button type="button" onclick="showTab('file')">📎 File</button>
   </div>
 
-  <form id="qrForm" action="/generate" method="post" enctype="multipart/form-data" target="_blank">
+  <form id="qrForm" action="/generate" method="post" enctype="multipart/form-data">
     <input type="hidden" name="type" id="qrType" value="link" />
 
     <div id="link" class="tab-content active">
@@ -87,9 +81,9 @@
       <input type="text" id="textLink" name="text" placeholder="https://example.com" />
     </div>
 
-    <div id="multiLinks" class="tab-content">
-      <label for="multiLinksInput">Enter multiple links (comma separated):</label>
-      <textarea id="multiLinksInput" name="links" placeholder="https://example1.com, https://example2.com"></textarea>
+    <div id="multilink" class="tab-content">
+      <label for="multiLinks">Enter Multiple Links (one per line):</label>
+      <textarea id="multiLinks" name="multiLinks" rows="5" placeholder="https://site1.com\nhttps://site2.com"></textarea>
     </div>
 
     <div id="text" class="tab-content">
@@ -98,50 +92,69 @@
     </div>
 
     <div id="wifi" class="tab-content">
-      <label for="wifiSsid">WiFi SSID (Network Name):</label>
-      <input type="text" id="wifiSsid" name="wifiSsid" placeholder="Your WiFi name" />
-      <label for="wifiEncryption">Encryption Type:</label>
+      <label for="wifiSsid">WiFi SSID:</label>
+      <input type="text" id="wifiSsid" name="wifiSsid" />
+      <label for="wifiEncryption">Encryption:</label>
       <select id="wifiEncryption" name="wifiEncryption">
         <option value="WPA">WPA/WPA2</option>
         <option value="WEP">WEP</option>
         <option value="NONE">None</option>
       </select>
-      <label for="wifiPassword">WiFi Password:</label>
-      <input type="text" id="wifiPassword" name="wifiPassword" placeholder="WiFi password" />
+      <label for="wifiPassword">Password:</label>
+      <input type="text" id="wifiPassword" name="wifiPassword" />
+    </div>
+
+    <div id="file" class="tab-content">
+      <label for="fileUpload">Upload File:</label>
+      <input type="file" id="fileUpload" name="file" />
     </div>
 
     <div id="payment" class="tab-content">
       <label for="paymentEmail">PayPal Email:</label>
-      <input type="text" id="paymentEmail" name="paymentEmail" placeholder="your-email@example.com" />
+      <input type="text" id="paymentEmail" name="paymentEmail" />
       <label for="paymentAmount">Amount (AUD):</label>
-      <input type="number" id="paymentAmount" name="paymentAmount" min="0" step="0.01" placeholder="0.00" />
-      <label for="label">Label (optional):</label>
-      <input type="text" id="label" name="label" placeholder="Description or label" />
+      <input type="number" id="paymentAmount" name="paymentAmount" min="0" step="0.01" />
     </div>
 
-    <div id="file" class="tab-content">
-      <label for="fileInput">Upload file (image or text, max 5MB):</label>
-      <input type="file" id="fileInput" name="file" accept="image/*,text/*" />
-    </div>
+    <label for="labelText">Label (optional):</label>
+    <input type="text" id="labelText" name="label" />
 
-    <label for="encrypt">Encrypt QR content (AES password):</label>
-    <input type="text" id="encrypt" name="encrypt" placeholder="Password (optional)" />
+    <label for="fgColor">Foreground Color:</label>
+    <input type="color" id="fgColor" name="fgColor" value="#000000" />
 
-    <br />
-    <button type="submit" id="generateBtn">Generate QR Code (opens in new tab)</button>
+    <label for="bgColor">Background Color:</label>
+    <input type="color" id="bgColor" name="bgColor" value="#ffffff" />
+
+    <label for="logoInput">Upload Logo (optional):</label>
+    <input type="file" id="logoInput" name="logo" accept="image/*" />
+
+    <label for="outputFormat">Output Format:</label>
+    <select id="outputFormat" name="outputFormat">
+      <option value="png">PNG</option>
+      <option value="svg">SVG</option>
+      <option value="pdf">PDF</option>
+    </select>
+
+    <label for="encryptText">Optional Password (encrypt QR content):</label>
+    <input type="text" id="encryptText" name="encrypt" placeholder="Leave empty for none" />
+
+    <button id="downloadBtn" type="submit">⬇️ Generate Final QR</button>
   </form>
 
-  <script>
-    function showTab(name) {
-      document.querySelectorAll('.tab-content').forEach(el => {
-        el.classList.remove('active');
-      });
-      document.getElementById(name).classList.add('active');
-      document.getElementById('qrType').value = name;
-    }
+  <canvas id="previewCanvas" width="300" height="360"></canvas>
+  <img id="logoPreview" alt="Logo preview" />
 
-    // Initialize default tab
-    showTab('link');
+  <script>
+    const tabs = ['link', 'multilink', 'text', 'wifi', 'file', 'payment'];
+    const qrTypeInput = document.getElementById('qrType');
+
+    function showTab(tabName) {
+      tabs.forEach(tab => {
+        document.getElementById(tab).classList.remove('active');
+      });
+      document.getElementById(tabName).classList.add('active');
+      qrTypeInput.value = tabName;
+    }
   </script>
 </body>
 </html>
