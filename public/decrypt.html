@@ -1,53 +1,52 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
+  <meta charset="UTF-8">
   <title>Decrypt QR Code</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
   <style>
     body {
-      font-family: Calibri, sans-serif;
+      font-family: Calibri, Comic Sans MS;
       max-width: 600px;
       margin: auto;
       padding: 20px;
       text-align: center;
+      background: linear-gradient(to bottom right, #e0f7fa, #f1f8e9);
     }
-    textarea, input {
+    input[type="text"], input[type="password"] {
       width: 100%;
       padding: 10px;
-      margin-top: 10px;
-      font-size: 16px;
+      margin: 10px 0;
+      box-sizing: border-box;
     }
     button {
-      margin-top: 15px;
       padding: 10px 20px;
       font-size: 16px;
       cursor: pointer;
     }
     #result {
       margin-top: 20px;
+      text-align: left;
+      white-space: pre-wrap;
       word-wrap: break-word;
-      background-color: #f0f0f0;
-      padding: 15px;
-      border-radius: 10px;
     }
   </style>
 </head>
 <body>
-  <h1>🔓 Decrypt QR Code Data</h1>
+  <h1>🔐 Decrypt QR Code</h1>
+  <p>Enter the encrypted data and password used to generate the QR code.</p>
 
-  <label for="encrypted">Encrypted Data:</label>
-  <textarea id="encrypted" rows="5" placeholder="Paste the encrypted data or scan a QR that links to this page..."></textarea>
+  <label for="encrypted">Encrypted Data (auto-filled if QR link used):</label>
+  <input type="text" id="encrypted" placeholder="iv:encryptedHexString" />
 
   <label for="password">Password:</label>
-  <input type="text" id="password" placeholder="Enter password to decrypt" />
+  <input type="password" id="password" placeholder="Enter password here" />
 
   <button onclick="decrypt()">🔓 Decrypt</button>
 
   <div id="result"></div>
 
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
   <script>
-    // Auto-fill data from URL
     const urlParams = new URLSearchParams(window.location.search);
     const data = urlParams.get('data');
     if (data) {
@@ -65,13 +64,24 @@
       }
 
       try {
-        const bytes = CryptoJS.AES.decrypt(encrypted, password);
-        const decrypted = bytes.toString(CryptoJS.enc.Utf8);
+        const [ivHex, encryptedHex] = encrypted.split(":");
+        const iv = CryptoJS.enc.Hex.parse(ivHex);
+        const encryptedData = CryptoJS.enc.Hex.parse(encryptedHex);
+        const key = CryptoJS.PBKDF2(password, CryptoJS.enc.Utf8.parse("salt"), {
+          keySize: 256 / 32,
+          iterations: 1000
+        });
+        const decrypted = CryptoJS.AES.decrypt({ ciphertext: encryptedData }, key, {
+          iv: iv,
+          mode: CryptoJS.mode.CBC,
+          padding: CryptoJS.pad.Pkcs7
+        });
 
-        if (!decrypted) {
-          resultDiv.innerHTML = '❌ Incorrect password or invalid data.';
+        const plainText = decrypted.toString(CryptoJS.enc.Utf8);
+        if (plainText) {
+          resultDiv.innerHTML = `<strong>✅ Decrypted Data:</strong><br><br><pre>${plainText}</pre>`;
         } else {
-          resultDiv.innerHTML = `<strong>✅ Decrypted Data:</strong><br><br><pre>${decrypted}</pre>`;
+          resultDiv.innerHTML = '❌ Incorrect password or invalid data.';
         }
       } catch (e) {
         resultDiv.innerHTML = '❌ Error during decryption.';
