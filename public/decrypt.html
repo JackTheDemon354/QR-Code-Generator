@@ -1,95 +1,51 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <title>Decrypt QR Code</title>
-  <script src="https://cdn.jsdelivr.net/npm/node-forge@1.3.1/dist/forge.min.js"></script>
+  <meta charset="UTF-8" />
+  <title>Decrypt QR Data</title>
   <style>
     body {
-      font-family: Calibri, Comic Sans MS;
-      max-width: 600px;
-      margin: auto;
-      padding: 20px;
-      text-align: center;
+      font-family: Calibri, sans-serif;
       background: linear-gradient(to bottom right, #e0f7fa, #f1f8e9);
+      text-align: center;
+      padding: 30px;
+      max-width: 500px;
+      margin: auto;
     }
-    input[type="text"], input[type="password"] {
+    input, button, textarea {
       width: 100%;
       padding: 10px;
-      margin: 10px 0;
+      margin-top: 10px;
+      font-size: 16px;
       box-sizing: border-box;
     }
     button {
-      padding: 10px 20px;
-      font-size: 16px;
       cursor: pointer;
-    }
-    #result {
-      margin-top: 20px;
-      text-align: left;
-      white-space: pre-wrap;
-      word-wrap: break-word;
     }
   </style>
 </head>
 <body>
   <h1>🔐 Decrypt QR Code</h1>
-  <p>Enter the encrypted data and password used to generate the QR code.</p>
+  <form method="POST" action="/decrypt">
+    <label for="encryptedData">Encrypted QR Data (Base64):</label>
+    <textarea id="encryptedData" name="encryptedData" rows="4" required></textarea>
 
-  <label for="encrypted">Encrypted Data (auto-filled if QR link used):</label>
-  <input type="text" id="encrypted" placeholder="iv:encryptedHexString" />
+    <label for="password">Password:</label>
+    <input type="text" id="password" name="password" required />
 
-  <label for="password">Password:</label>
-  <input type="password" id="password" placeholder="Enter password here" />
+    <button type="submit">🔓 Decrypt</button>
+  </form>
 
-  <button onclick="decrypt()">🔓 Decrypt</button>
-
-  <div id="result"></div>
+  <p style="margin-top:20px;">
+    Back to <a href="/">QR Generator</a>
+  </p>
 
   <script>
-    const urlParams = new URLSearchParams(window.location.search);
-    const data = urlParams.get('data');
+    // Autofill data from URL
+    const params = new URLSearchParams(location.search);
+    const data = params.get("data");
     if (data) {
-      document.getElementById('encrypted').value = decodeURIComponent(data);
-    }
-
-    function decrypt() {
-      const input = document.getElementById('encrypted').value.trim();
-      const password = document.getElementById('password').value.trim();
-      const resultDiv = document.getElementById('result');
-
-      if (!input || !password) {
-        resultDiv.innerText = "❗ Enter both encrypted data and password.";
-        return;
-      }
-
-      try {
-        const [ivHex, encryptedHex] = input.split(":");
-        const iv = forge.util.hexToBytes(ivHex);
-        const encrypted = forge.util.hexToBytes(encryptedHex);
-
-        // Generate key using scrypt
-        forge.scrypt(password, 'salt', 32, { N: 16384, r: 8, p: 1 }, (err, key) => {
-          if (err) {
-            resultDiv.innerText = "❌ Error with scrypt.";
-            return;
-          }
-
-          const decipher = forge.cipher.createDecipher('AES-CBC', key);
-          decipher.start({ iv: iv });
-          decipher.update(forge.util.createBuffer(encrypted));
-          const pass = decipher.finish();
-
-          if (pass) {
-            resultDiv.innerHTML = `<strong>✅ Decrypted:</strong><br><br><pre>${decipher.output.toString()}</pre>`;
-          } else {
-            resultDiv.innerText = "❌ Incorrect password or corrupted data.";
-          }
-        });
-
-      } catch (e) {
-        resultDiv.innerText = "❌ Decryption failed.";
-      }
+      document.getElementById("encryptedData").value = data;
     }
   </script>
 </body>
